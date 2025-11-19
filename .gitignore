@@ -11,3 +11,10 @@ wheels/
 
 data/
 checkpoints/
+
+# Unpushed stuff
+*.jpg
+*.png
+*.parquet
+*.json
+*.pth

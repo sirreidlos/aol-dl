@@ -74,7 +74,7 @@ class SRDataset(Dataset):
             img = img.convert("RGBA")
         img = img.convert("RGB")
 
-        if img.width <= 96 or img.height <= 96:
+        if img.width <= self.crop_size or img.height <= self.crop_size:
             print(self.images[i], img.width, img.height)
 
         lr_img, hr_img = self.transform(img)

@@ -240,7 +240,7 @@ class SRGANLossStrategy:
         lr_imgs: [-1, 1]
         hr_imgs: [-1, 1]
         """
-        sr_imgs = generator(lr_imgs)
+        sr_imgs = generator(lr_imgs).clamp(-1, 1)
 
         hr_imgs_imgnet = convert_image(hr_imgs, "[-1, 1]", "imagenet-norm")
         sr_imgs_imgnet = convert_image(sr_imgs, "[-1, 1]", "imagenet-norm")
@@ -389,7 +389,7 @@ class SRGANTrainer:
             total_perceptual_loss += perceptual_loss.item()
 
         with torch.no_grad():
-            sr_imgs = self.generator(lr_imgs).detach()
+            sr_imgs = self.generator(lr_imgs).detach().clamp(-1, 1)
 
         discriminator_loss = self.loss_strategy.calculate_loss_d(
             self.discriminator,
