@@ -139,7 +139,7 @@ def main():
         channels=args.channels,
     )
 
-    model = ResNet(config)
+    model = ResNet(config).to(device)
     optimizer = torch.optim.Adam(
         params=filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr
     )
@@ -160,7 +160,7 @@ def main():
         split="train",
         crop_size=args.crop_size,
         scaling_factor=args.scaling_factor,
-        lr_img_type="imagenet-norm",
+        lr_img_type="[-1, 1]",
         hr_img_type="[-1, 1]",
     )
     train_loader = torch.utils.data.DataLoader(

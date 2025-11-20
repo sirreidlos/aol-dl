@@ -150,12 +150,3 @@ class ESRGANGenerator(nn.Module):
         out = self.conv3(out)
 
         return out
-
-
-class ESRGANDiscriminator(nn.Module):
-    def __init__(self) -> None:
-        super(ESRGANDiscriminator, self).__init__()
-        pass
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        pass

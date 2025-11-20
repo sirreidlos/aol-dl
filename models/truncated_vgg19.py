@@ -46,7 +46,7 @@ class TruncatedVGG19(nn.Module):
     (36): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
     """
 
-    def __init__(self, selected: Tuple[int, int]):
+    def __init__(self, selected: Tuple[int, int], include_activation=True):
         super(TruncatedVGG19, self).__init__()
         vgg19 = models.vgg19(weights=models.VGG19_Weights.DEFAULT).features
         feature_map_boundary = {
@@ -71,7 +71,11 @@ class TruncatedVGG19(nn.Module):
         assert selected in feature_map_boundary, "Invalid selection of boundary"
 
         boundary = feature_map_boundary[selected]
+        if not include_activation:
+            boundary -= 1
         self.truncated = nn.Sequential(*list(vgg19.children())[: (boundary + 1)])
+        for param in self.parameters():
+            param.requires_grad = False
         self.eval()
 
     def forward(self, x):
