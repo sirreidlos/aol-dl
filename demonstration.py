@@ -114,7 +114,7 @@ def main(args: Args):
     )
 
     lr_upsampled = lr.resize((hr.width, hr.height), Image.Resampling.BICUBIC)
-    lr = convert_image(lr, "pil", "imagenet-norm")
+    lr = convert_image(lr, "pil", "[-1, 1]")
 
     assert not isinstance(lr, Image.Image)
 
