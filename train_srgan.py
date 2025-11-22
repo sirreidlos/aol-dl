@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import torch.backends.cudnn as cudnn
@@ -46,6 +47,8 @@ class Args:
     grad_clip: float | None = None
     k: int = 1
     label_smoothing: float = 0.1
+    vgg_layer: Tuple[int, int] = (5, 4)
+    loss_strategy: str = "perceptual"
 
 
 def parse_args() -> Args:
@@ -147,11 +150,20 @@ def parse_args() -> Args:
         help="Number of generator updates per discriminator update",
     )
     parser.add_argument("--label_smoothing", type=float, default=0.1)
+    parser.add_argument("--vgg_layer", nargs=2, type=int, default=[5, 4])
+    parser.add_argument(
+        "--loss_Strategy",
+        type=str,
+        choices=["perceptual", "content"],
+        default="perceptual",
+    )
 
     args = parser.parse_args()
 
     if args.discriminator_lr is None:
         args.discriminator_lr = args.lr
+
+    args.vgg_layer = tuple(args.vgg_layer)
 
     return Args(**vars(args))
 
@@ -220,16 +232,82 @@ class CheckpointManager:
         return checkpoint.get("epoch")
 
 
-class SRGANLossStrategy:
+class SRGANLossStrategy(ABC):
+    @abstractmethod
+    def calculate_loss_g(self): ...
+
+    @abstractmethod
+    def calculate_loss_d(self): ...
+
+
+class SRGANContentLossStrategy(SRGANLossStrategy):
     def __init__(
         self,
         adversarial_loss_weight: float,
-        vgg: TruncatedVGG19,
         device=DEFAULT_DEVICE,
         label_smoothing: float = 0.0,
     ):
         self.adversarial_loss_weight = adversarial_loss_weight
-        self.vgg = vgg
+        self.label_smoothing = label_smoothing
+
+        self.content_loss_criterion = nn.MSELoss().to(device)
+        self.adversarial_loss_criterion = nn.BCEWithLogitsLoss().to(device)
+
+    def calculate_loss_g(
+        self,
+        generator: Generator,
+        discriminator: Discriminator,
+        lr_imgs: Tensor,
+        hr_imgs: Tensor,
+    ) -> Tensor:
+        """
+        lr_imgs: [-1, 1]
+        hr_imgs: [-1, 1]
+        """
+        sr_imgs = generator(lr_imgs).clamp(-1, 1)
+        hr_imgs = hr_imgs.detach()
+
+        discriminator_prediction = discriminator(sr_imgs)
+        content_loss = self.content_loss_criterion(sr_imgs, hr_imgs)
+        adversarial_loss = self.adversarial_loss_criterion(
+            discriminator_prediction,
+            torch.ones_like(discriminator_prediction),
+        )
+        perceptual_loss = content_loss + self.adversarial_loss_weight * adversarial_loss
+
+        return perceptual_loss
+
+    def calculate_loss_d(
+        self,
+        discriminator: Discriminator,
+        sr_imgs: Tensor,
+        hr_imgs: Tensor,
+    ) -> Tensor:
+        discriminator_sr_prediction = discriminator(sr_imgs)
+        discriminator_hr_prediction = discriminator(hr_imgs)
+
+        fake_targets = torch.zeros_like(discriminator_sr_prediction)
+        real_targets = torch.ones_like(discriminator_hr_prediction) * (
+            1.0 - self.label_smoothing
+        )
+
+        discriminator_loss = self.adversarial_loss_criterion(
+            discriminator_sr_prediction, fake_targets
+        ) + self.adversarial_loss_criterion(discriminator_hr_prediction, real_targets)
+
+        return discriminator_loss
+
+
+class SRGANPerceptualLossStrategy(SRGANLossStrategy):
+    def __init__(
+        self,
+        adversarial_loss_weight: float,
+        device=DEFAULT_DEVICE,
+        label_smoothing: float = 0.0,
+        vgg_layer=(5, 4),
+    ):
+        self.adversarial_loss_weight = adversarial_loss_weight
+        self.vgg = TruncatedVGG19(selected=vgg_layer).to(DEFAULT_DEVICE)
         self.label_smoothing = label_smoothing
 
         self.content_loss_criterion = nn.MSELoss().to(device)
@@ -461,9 +539,13 @@ def main():
         )
         start_epoch = cp_epoch + 1
 
-    vgg = TruncatedVGG19(selected=(5, 4)).to(DEFAULT_DEVICE)
-
-    loss_strategy = SRGANLossStrategy(5e-3, vgg, device, args.label_smoothing)
+    match args.loss_strategy:
+        case "perceptual":
+            loss_strategy = SRGANPerceptualLossStrategy(
+                5e-3, device, args.label_smoothing, vgg_layer=args.vgg_layer
+            )
+        case "content":
+            loss_strategy = SRGANContentLossStrategy(5e-3, device, args.label_smoothing)
 
     train_dataset = SRDataset(
         args.data_folder,
