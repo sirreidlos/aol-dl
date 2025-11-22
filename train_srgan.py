@@ -172,6 +172,7 @@ class CheckpointManager:
         discriminator: Discriminator,
         generator_optimizer: optim.Optimizer,
         discriminator_optimizer: optim.Optimizer,
+        loss: Optional[Tuple[float, float]] = None,
     ) -> None:
         filename = f"srgan_{epoch + 1}.pth.tar"
 
@@ -183,14 +184,19 @@ class CheckpointManager:
         #         f"Validation — Epoch {epoch + 1}: PSNR={{val_psnr:.2f}}, SSIM={{val_ssim:.3f}}"
         #     )
 
+        save_object = {
+            "epoch": epoch,
+            "generator": generator.state_dict(),
+            "discriminator": discriminator.state_dict(),
+            "generator_optimizer": generator_optimizer.state_dict(),
+            "discriminator_optimizer": discriminator_optimizer.state_dict(),
+        }
+
+        if loss is not None:
+            save_object["loss"] = loss
+
         torch.save(
-            {
-                "epoch": epoch,
-                "generator": generator.state_dict(),
-                "discriminator": discriminator.state_dict(),
-                "generator_optimizer": generator_optimizer.state_dict(),
-                "discriminator_optimizer": discriminator_optimizer.state_dict(),
-            },
+            save_object,
             os.path.join(self.path, filename),
         )
 
@@ -335,6 +341,7 @@ class SRGANTrainer:
                 self.discriminator,
                 self.generator_optimizer,
                 self.discriminator_optimizer,
+                loss=(total_g_loss, total_d_loss),
             )
 
         return loss_history

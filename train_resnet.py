@@ -201,6 +201,7 @@ def main():
                 "epoch": epoch,
                 "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
+                "loss": total_loss,
             },
             f"{args.checkpoints_dir}/srresnet_{epoch + 1}.pth.tar",
         )
