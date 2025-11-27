@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from dataclasses import asdict, dataclass
+from typing import List, Literal, Optional, Tuple
 import torch.backends.cudnn as cudnn
 import torch
 from torch import Tensor, nn, optim
@@ -26,29 +26,32 @@ ssl._create_default_https_context = ssl._create_default_https_context = (
 
 @dataclass
 class Args:
-    checkpoints_dir: str = "./checkpoints"
-    warmup_model: str | None = None
-    data_folder: str = "./"
-    crop_size: int = 96
-    convolutional_block_count: int = 7
-    scaling_factor: int = 4
-    dense_size: int = 1024
-    large_kernel_size: int = 9
-    kernel_size: int = 3
-    channels: int = 64
-    blocks: int = 16
-    checkpoint: str | None = None
-    batch_size: int = 16
-    start_epoch: int = 0
-    iterations: float = 1e6
-    workers: int = 4
-    lr: float = 1e-4
-    discriminator_lr: float = 1e-4
-    grad_clip: float | None = None
-    k: int = 1
-    label_smoothing: float = 0.1
-    vgg_layer: Tuple[int, int] = (5, 4)
-    loss_strategy: str = "perceptual"
+    checkpoints_dir: str
+    warmup_model: str | None
+    data_folder: str
+    crop_size: int
+    convolutional_block_count: int
+    scaling_factor: int
+    dense_size: int
+    large_kernel_size: int
+    kernel_size: int
+    channels: int
+    blocks: int
+    checkpoint: str | None
+    batch_size: int
+    start_epoch: int
+    iterations: float
+    workers: int
+    lr: float
+    discriminator_lr: float
+    grad_clip: float | None
+    k: int
+    label_smoothing: float
+    vgg_layer: Tuple[int, int]
+    loss_strategy: Literal["perceptual", "content", "relativistic"]
+    exclude_activation: bool
+    checkpoint_prefix: str
+    psnr_mode: bool
 
 
 def parse_args() -> Args:
@@ -152,10 +155,17 @@ def parse_args() -> Args:
     parser.add_argument("--label_smoothing", type=float, default=0.1)
     parser.add_argument("--vgg_layer", nargs=2, type=int, default=[5, 4])
     parser.add_argument(
-        "--loss_Strategy",
+        "--loss_strategy",
         type=str,
-        choices=["perceptual", "content"],
+        choices=["perceptual", "content", "relativistic"],
         default="perceptual",
+    )
+    parser.add_argument("--exclude_activation", action="store_true")
+    parser.add_argument("--checkpoint_prefix", type=str, default="srgan_")
+    parser.add_argument(
+        "--psnr_mode",
+        action="store_true",
+        help="Train in PSNR mode (without discriminator) for pretraining.",
     )
 
     args = parser.parse_args()
@@ -173,9 +183,10 @@ cudnn.benchmark = True
 
 
 class CheckpointManager:
-    def __init__(self, checkpoints_dir: str):
+    def __init__(self, checkpoints_dir: str, prefix: str = "srgan_"):
         self.path = Path(checkpoints_dir)
         self.path.mkdir(parents=True, exist_ok=True)
+        self.prefix = prefix
 
     def save(
         self,
@@ -184,9 +195,9 @@ class CheckpointManager:
         discriminator: Discriminator,
         generator_optimizer: optim.Optimizer,
         discriminator_optimizer: optim.Optimizer,
-        loss: Optional[Tuple[float, float]] = None,
+        loss: dict,
     ) -> None:
-        filename = f"srgan_{epoch + 1}.pth.tar"
+        filename = f"{self.prefix}{epoch + 1}.pth.tar"
 
         # Validation every N epochs
         # if (epoch + 1) % 5 == 0:
@@ -232,9 +243,18 @@ class CheckpointManager:
         return checkpoint.get("epoch")
 
 
+@dataclass
+class LossDict:
+    g_pixel: Optional[float] = None
+    g_perceptual: Optional[float] = None
+    g_adversarial: Optional[float] = None
+    g_total: Optional[float] = None
+    d_loss: Optional[float] = None
+
+
 class SRGANLossStrategy(ABC):
     @abstractmethod
-    def calculate_loss_g(self, *args, **kwargs) -> Tensor: ...
+    def calculate_loss_g(self, *args, **kwargs) -> Tuple[Tensor, LossDict]: ...
 
     @abstractmethod
     def calculate_loss_d(self, *args, **kwargs) -> Tensor: ...
@@ -259,7 +279,7 @@ class SRGANContentLossStrategy(SRGANLossStrategy):
         discriminator: Discriminator,
         lr_imgs: Tensor,
         hr_imgs: Tensor,
-    ) -> Tensor:
+    ) -> Tuple[Tensor, LossDict]:
         """
         lr_imgs: [-1, 1]
         hr_imgs: [-1, 1]
@@ -305,9 +325,12 @@ class SRGANPerceptualLossStrategy(SRGANLossStrategy):
         device=DEFAULT_DEVICE,
         label_smoothing: float = 0.0,
         vgg_layer=(5, 4),
+        exclude_activation=False,
     ):
         self.adversarial_loss_weight = adversarial_loss_weight
-        self.vgg = TruncatedVGG19(selected=vgg_layer).to(DEFAULT_DEVICE)
+        self.vgg = TruncatedVGG19(
+            selected=vgg_layer, include_activation=not exclude_activation
+        ).to(DEFAULT_DEVICE)
         self.label_smoothing = label_smoothing
 
         self.content_loss_criterion = nn.MSELoss().to(device)
@@ -319,7 +342,7 @@ class SRGANPerceptualLossStrategy(SRGANLossStrategy):
         discriminator: Discriminator,
         lr_imgs: Tensor,
         hr_imgs: Tensor,
-    ) -> Tensor:
+    ) -> Tuple[Tensor, LossDict]:
         """
         lr_imgs: [-1, 1]
         hr_imgs: [-1, 1]
@@ -340,7 +363,13 @@ class SRGANPerceptualLossStrategy(SRGANLossStrategy):
         )
         perceptual_loss = content_loss + self.adversarial_loss_weight * adversarial_loss
 
-        return perceptual_loss
+        loss_dict = LossDict(
+            g_perceptual=content_loss.item(),
+            g_adversarial=adversarial_loss.item(),
+            g_total=perceptual_loss.item(),
+        )
+
+        return perceptual_loss, loss_dict
 
     def calculate_loss_d(
         self,
@@ -363,20 +392,113 @@ class SRGANPerceptualLossStrategy(SRGANLossStrategy):
         return discriminator_loss
 
 
+class RaGANLossStrategy(SRGANLossStrategy):
+    def __init__(
+        self,
+        perceptual_loss_weight: float,
+        pixel_loss_weight: float,
+        adversarial_loss_weight: float,
+        device=DEFAULT_DEVICE,
+        vgg_layer=(5, 4),
+        exclude_activation=False,
+    ):
+        self.perceptual_loss_weight = perceptual_loss_weight
+        self.pixel_loss_weight = pixel_loss_weight
+        self.adversarial_loss_weight = adversarial_loss_weight
+
+        self.vgg = TruncatedVGG19(
+            selected=vgg_layer, include_activation=not exclude_activation
+        ).to(DEFAULT_DEVICE)
+        self.l1_loss = nn.L1Loss().to(device)
+        self.adversarial_loss_criterion = nn.BCEWithLogitsLoss().to(device)
+
+    def calculate_loss_g(
+        self,
+        generator: Generator,
+        discriminator: Discriminator,
+        lr_imgs: Tensor,
+        hr_imgs: Tensor,
+    ) -> Tuple[Tensor, LossDict]:
+        sr_imgs = generator(lr_imgs).clamp(-1, 1)
+
+        hr_imgs_imgnet = convert_image(hr_imgs, "[-1, 1]", "imagenet-norm")
+        sr_imgs_imgnet = convert_image(sr_imgs, "[-1, 1]", "imagenet-norm")
+
+        vgg_hr_imgs = self.vgg(hr_imgs_imgnet).detach()
+        vgg_sr_imgs = self.vgg(sr_imgs_imgnet)
+
+        perceptual_loss = self.l1_loss(vgg_sr_imgs, vgg_hr_imgs)
+        pixel_loss = self.l1_loss(sr_imgs, hr_imgs)
+
+        assert discriminator is not None, "Discriminator required for GAN mode"
+
+        pred_real = discriminator(hr_imgs).detach()
+        pred_fake = discriminator(sr_imgs)
+
+        adversarial_loss = (
+            self.adversarial_loss_criterion(
+                pred_fake - pred_real.mean(0, keepdim=True),
+                torch.ones_like(pred_fake),
+            )
+            + self.adversarial_loss_criterion(
+                pred_real - pred_fake.mean(0, keepdim=True),
+                torch.zeros_like(pred_real),
+            )
+        ) / 2
+
+        total_loss = (
+            self.perceptual_loss_weight * perceptual_loss
+            + self.pixel_loss_weight * pixel_loss
+            + self.adversarial_loss_weight * adversarial_loss
+        )
+
+        loss_dict = LossDict(
+            g_perceptual=perceptual_loss.item(),
+            g_pixel=pixel_loss.item(),
+            g_adversarial=adversarial_loss.item(),
+            g_total=total_loss.item(),
+        )
+
+        return total_loss, loss_dict
+
+    def calculate_loss_d(
+        self,
+        discriminator: Discriminator,
+        sr_imgs: Tensor,
+        hr_imgs: Tensor,
+    ) -> Tensor:
+        pred_real = discriminator(hr_imgs)
+        pred_fake = discriminator(sr_imgs.detach())
+
+        loss_real = self.adversarial_loss_criterion(
+            pred_real - pred_fake.mean(0, keepdim=True),
+            torch.ones_like(pred_real),
+        )
+        loss_fake = self.adversarial_loss_criterion(
+            pred_fake - pred_real.mean(0, keepdim=True),
+            torch.zeros_like(pred_fake),
+        )
+
+        discriminator_loss = (loss_real + loss_fake) / 2
+
+        return discriminator_loss
+
+
 class SRGANTrainer:
     def __init__(
         self,
         generator: Generator,
-        discriminator: Discriminator,
+        discriminator: Optional[Discriminator],
         generator_optimizer: optim.Optimizer,
-        discriminator_optimizer: optim.Optimizer,
+        discriminator_optimizer: Optional[optim.Optimizer],
         loss_strategy: SRGANLossStrategy,
         train_loader: DataLoader,
         checkpoint_manager: CheckpointManager,
-        device: torch.device = DEFAULT_DEVICE,
-        grad_clip: Optional[float] = None,
-        k: int = 1,
-        label_smoothing: float = 0.0,
+        device: torch.device,
+        grad_clip: Optional[float],
+        k: int,
+        label_smoothing: float,
+        psnr_mode: bool,
     ):
         self.generator = generator
         self.discriminator = discriminator
@@ -389,6 +511,13 @@ class SRGANTrainer:
         self.k = k
         self.checkpoint_manager = checkpoint_manager
         self.label_smoothing = label_smoothing
+        self.psnr_mode = psnr_mode
+
+        if not psnr_mode:
+            assert discriminator is not None, "Discriminator required for GAN mode"
+            assert discriminator_optimizer is not None, (
+                "Discriminator optimizer required for GAN mode"
+            )
 
     def train(self, start_epoch: int, iterations: float) -> List[Tuple[float, float]]:
         loss_history = []
@@ -397,21 +526,22 @@ class SRGANTrainer:
         pbar = tqdm(
             range(start_epoch, epochs),
             desc="Epochs",
-            ncols=100,
+            ncols=120,
             position=0,
             initial=start_epoch,
             total=epochs,
         )
         for epoch in pbar:
-            total_g_loss, total_d_loss = self.train_epoch(epoch)
+            loss_dict = self.train_epoch(epoch)
             pbar.set_postfix(
                 {
-                    "TGLoss": f"{total_g_loss:.4f}",
-                    "TDLoss": f"{total_d_loss:.4f}",
+                    "GLoss": f"{loss_dict.g_total:.4f}",
+                    "DLoss": f"{loss_dict.d_loss:.4f}",
+                    "Perc": f"{loss_dict.g_perceptual:.4f}",
                 }
             )
 
-            loss_history.append([total_g_loss, total_d_loss])
+            loss_history.append(loss_dict)
 
             self.checkpoint_manager.save(
                 epoch,
@@ -419,36 +549,114 @@ class SRGANTrainer:
                 self.discriminator,
                 self.generator_optimizer,
                 self.discriminator_optimizer,
-                loss=(total_g_loss, total_d_loss),
+                loss=asdict(loss_dict),
             )
 
         return loss_history
 
-    def train_epoch(self, epoch: int) -> Tuple[float, float]:
-        total_generator_loss = 0.0
-        total_discriminator_loss = 0.0
+    def train_epoch(self, epoch: int) -> LossDict:
+        total_g_losses = {
+            "g_perceptual": 0.0,
+            "g_pixel": 0.0,
+            "g_adversarial": 0.0,
+            "g_total": 0.0,
+        }
+        total_d_loss = 0.0
 
         batch_pbar = tqdm(
             self.train_loader,
             total=len(self.train_loader),
             desc=f"Epoch {epoch}",
-            ncols=100,
+            ncols=120,
             position=1,
             leave=False,
         )
 
         for batch in batch_pbar:
-            g_loss, d_loss = self.train_step(batch)
-            total_generator_loss += g_loss
-            total_discriminator_loss += d_loss
-            batch_pbar.set_postfix({"GLoss": f"{g_loss:.4f}", "DLoss": f"{d_loss:.4f}"})
+            if self.psnr_mode:
+                g_loss = self.train_step_psnr(batch)
+                g_loss_dict = asdict(g_loss)
 
-        return total_generator_loss / len(
-            self.train_loader
-        ), total_discriminator_loss / len(self.train_loader)
+                for key in total_g_losses:
+                    total_g_losses[key] += g_loss_dict[key]
 
-    def train_step(self, batch) -> Tuple[float, float]:
+                batch_pbar.set_postfix(
+                    {
+                        "GLoss": f"{g_loss.g_total:.4f}",
+                        "Perc": f"{g_loss.g_perceptual:.4f}",
+                        "Pix": f"{g_loss.g_pixel:.4f}",
+                    }
+                )
+            else:
+                g_loss, d_loss = self.train_step_gan(batch)
+                g_loss_dict = asdict(g_loss)
+
+                for key in total_g_losses:
+                    total_g_losses[key] += g_loss_dict[key]
+                total_d_loss += d_loss
+
+                batch_pbar.set_postfix(
+                    {
+                        "G": f"{g_loss.g_total:.4f}",
+                        "Perc": f"{g_loss.g_perceptual:.4f}",
+                        "Pix": f"{g_loss.g_pixel:.4f}",
+                        "Adv": f"{g_loss.g_adversarial:.4f}",
+                        "D": f"{d_loss:.4f}",
+                    }
+                )
+
+        num_batches = len(self.train_loader)
+        result = {
+            "g_perceptual": total_g_losses["g_perceptual"] / num_batches,
+            "g_pixel": total_g_losses["g_pixel"] / num_batches,
+            "g_adversarial": 0.0,
+            "g_total": total_g_losses["g_total"] / num_batches,
+            "d_loss": 0.0,
+        }
+
+        if not self.psnr_mode:
+            result["g_adversarial"] = total_g_losses["g_adversarial"] / num_batches
+            result["d_loss"] = total_d_loss / num_batches
+
+        result = LossDict(**result)
+
+        return result
+
+    def train_step_psnr(self, batch) -> LossDict:
         self.generator.train()
+
+        lr_imgs, hr_imgs = batch
+        lr_imgs = lr_imgs.to(self.device)
+        hr_imgs = hr_imgs.to(self.device)
+
+        total_perceptual_loss = 0.0
+
+        for _ in range(self.k):
+            loss, g_loss_dict = self.loss_strategy.calculate_loss_g(
+                self.generator,
+                self.discriminator,
+                lr_imgs,
+                hr_imgs,
+            )
+
+            self.generator_optimizer.zero_grad()
+            loss.backward()
+            if self.grad_clip is not None:
+                nn.utils.clip_grad_value_(self.generator.parameters(), self.grad_clip)
+            self.generator_optimizer.step()
+
+            total_perceptual_loss += loss.item()
+
+        with torch.no_grad():
+            sr_imgs = self.generator(lr_imgs).detach().clamp(-1, 1)
+
+        del lr_imgs, hr_imgs, sr_imgs
+
+        return g_loss_dict
+
+    def train_step_gan(self, batch) -> Tuple[LossDict, float]:
+        self.generator.train()
+        assert self.discriminator, "GAN requires discriminator"
         self.discriminator.train()
 
         lr_imgs, hr_imgs = batch
@@ -458,7 +666,7 @@ class SRGANTrainer:
         total_perceptual_loss = 0.0
 
         for _ in range(self.k):
-            perceptual_loss = self.loss_strategy.calculate_loss_g(
+            loss, g_loss_dict = self.loss_strategy.calculate_loss_g(
                 self.generator,
                 self.discriminator,
                 lr_imgs,
@@ -466,12 +674,12 @@ class SRGANTrainer:
             )
 
             self.generator_optimizer.zero_grad()
-            perceptual_loss.backward()
+            loss.backward()
             if self.grad_clip is not None:
                 nn.utils.clip_grad_value_(self.generator.parameters(), self.grad_clip)
             self.generator_optimizer.step()
 
-            total_perceptual_loss += perceptual_loss.item()
+            total_perceptual_loss += loss.item()
 
         with torch.no_grad():
             sr_imgs = self.generator(lr_imgs).detach().clamp(-1, 1)
@@ -490,11 +698,12 @@ class SRGANTrainer:
 
         del lr_imgs, hr_imgs, sr_imgs
 
-        return total_perceptual_loss / max(1, self.k), discriminator_loss.item()
+        return g_loss_dict, discriminator_loss.item()
 
 
 def main():
     args = parse_args()
+    print(args)
     device = DEFAULT_DEVICE
 
     generator_config = GeneratorConfig(
@@ -527,7 +736,7 @@ def main():
         generator.resnet.load_state_dict(checkpoint["model"])
         generator_optimizer.load_state_dict(checkpoint["optimizer"])
 
-    checkpoint_manager = CheckpointManager(args.checkpoints_dir)
+    checkpoint_manager = CheckpointManager(args.checkpoints_dir, args.checkpoint_prefix)
     if args.checkpoint is not None:
         cp_epoch = checkpoint_manager.load(
             args.checkpoint,
@@ -542,10 +751,18 @@ def main():
     match args.loss_strategy:
         case "perceptual":
             loss_strategy = SRGANPerceptualLossStrategy(
-                5e-3, device, args.label_smoothing, vgg_layer=args.vgg_layer
+                5e-3,
+                device,
+                args.label_smoothing,
+                vgg_layer=args.vgg_layer,
+                exclude_activation=args.exclude_activation,
             )
         case "content":
             loss_strategy = SRGANContentLossStrategy(5e-3, device, args.label_smoothing)
+        case "relativistic":
+            loss_strategy = RaGANLossStrategy(
+                1.0, 1e-2, 5e-3, device, args.vgg_layer, args.exclude_activation
+            )
 
     train_dataset = SRDataset(
         args.data_folder,
@@ -575,6 +792,7 @@ def main():
         grad_clip=args.grad_clip,
         k=args.k,
         label_smoothing=args.label_smoothing,
+        psnr_mode=args.psnr_mode,
     )
 
     loss_history = trainer.train(start_epoch, args.iterations)

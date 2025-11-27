@@ -13,21 +13,22 @@ import argparse
 
 @dataclass
 class Args:
-    checkpoints_dir: str = "./checkpoints"
-    data_folder: str = "./"
-    crop_size: int = 96
-    scaling_factor: int = 4
-    large_kernel: int = 9
-    small_kernel: int = 3
-    channels: int = 64
-    blocks: int = 16
-    checkpoint: str | None = None
-    batch_size: int = 16
-    start_epoch: int = 0
-    iterations: float = 1e6
-    workers: int = 4
-    lr: float = 1e-4
-    grad_clip: float | None = None
+    checkpoints_dir: str
+    data_folder: str
+    crop_size: int
+    scaling_factor: int
+    large_kernel: int
+    small_kernel: int
+    channels: int
+    blocks: int
+    checkpoint: str | None
+    batch_size: int
+    start_epoch: int
+    iterations: float
+    workers: int
+    lr: float
+    grad_clip: float | None
+    checkpoint_prefix: str
 
 
 def parse_args() -> Args:
@@ -99,27 +100,11 @@ def parse_args() -> Args:
         default=None,
         help="Gradient clipping threshold (None to disable)",
     )
+    parser.add_argument("--checkpoint_prefix", type=str, default="srresnet_")
 
     args = parser.parse_args()
-    args = Args(
-        checkpoints_dir=args.checkpoints_dir,
-        data_folder=args.data_folder,
-        crop_size=args.crop_size,
-        scaling_factor=args.scaling_factor,
-        large_kernel=args.large_kernel,
-        small_kernel=args.small_kernel,
-        channels=args.channels,
-        blocks=args.blocks,
-        checkpoint=args.checkpoint,
-        batch_size=args.batch_size,
-        start_epoch=args.start_epoch,
-        iterations=args.iterations,
-        workers=args.workers,
-        lr=args.lr,
-        grad_clip=args.grad_clip,
-    )
 
-    return args
+    return Args(**vars(args))
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -203,7 +188,7 @@ def main():
                 "optimizer": optimizer.state_dict(),
                 "loss": total_loss,
             },
-            f"{args.checkpoints_dir}/srresnet_{epoch + 1}.pth.tar",
+            f"{args.checkpoints_dir}/{args.checkpoint_prefix}{epoch + 1}.pth.tar",
         )
 
 
