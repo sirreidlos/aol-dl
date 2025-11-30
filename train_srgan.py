@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
+import dataclasses
 from typing import List, Literal, Optional, Tuple
 import torch.backends.cudnn as cudnn
 import torch
@@ -50,6 +51,7 @@ class Args:
     vgg_layer: Tuple[int, int]
     loss_strategy: Literal["perceptual", "content", "relativistic"]
     exclude_activation: bool
+    exclude_bn: bool
     checkpoint_prefix: str
     psnr_mode: bool
 
@@ -161,6 +163,7 @@ def parse_args() -> Args:
         default="perceptual",
     )
     parser.add_argument("--exclude_activation", action="store_true")
+    parser.add_argument("--exclude_bn", action="store_true")
     parser.add_argument("--checkpoint_prefix", type=str, default="srgan_")
     parser.add_argument(
         "--psnr_mode",
@@ -183,10 +186,18 @@ cudnn.benchmark = True
 
 
 class CheckpointManager:
-    def __init__(self, checkpoints_dir: str, prefix: str = "srgan_"):
+    def __init__(
+        self,
+        checkpoints_dir: str,
+        prefix: str,
+        generator_config: GeneratorConfig,
+        discriminator_config: DiscriminatorConfig,
+    ):
         self.path = Path(checkpoints_dir)
         self.path.mkdir(parents=True, exist_ok=True)
         self.prefix = prefix
+        self.generator_config = generator_config
+        self.discriminator_config = discriminator_config
 
     def save(
         self,
@@ -213,6 +224,8 @@ class CheckpointManager:
             "discriminator": discriminator.state_dict(),
             "generator_optimizer": generator_optimizer.state_dict(),
             "discriminator_optimizer": discriminator_optimizer.state_dict(),
+            "generator_config": dataclasses.asdict(self.generator_config),
+            "discriminator_config": dataclasses.asdict(self.discriminator_config),
         }
 
         if loss is not None:
@@ -657,6 +670,7 @@ class SRGANTrainer:
     def train_step_gan(self, batch) -> Tuple[LossDict, float]:
         self.generator.train()
         assert self.discriminator, "GAN requires discriminator"
+        assert self.discriminator_optimizer, "GAN requires discriminator"
         self.discriminator.train()
 
         lr_imgs, hr_imgs = batch
@@ -712,6 +726,7 @@ def main():
         large_kernel_size=args.large_kernel_size,
         small_kernel_size=args.kernel_size,
         channels=args.channels,
+        include_bn=not args.exclude_bn,
     )
     generator = Generator(generator_config)
     generator = generator.to(DEFAULT_DEVICE)
@@ -736,7 +751,12 @@ def main():
         generator.resnet.load_state_dict(checkpoint["model"])
         generator_optimizer.load_state_dict(checkpoint["optimizer"])
 
-    checkpoint_manager = CheckpointManager(args.checkpoints_dir, args.checkpoint_prefix)
+    checkpoint_manager = CheckpointManager(
+        args.checkpoints_dir,
+        args.checkpoint_prefix,
+        generator_config,
+        discriminator_config,
+    )
     if args.checkpoint is not None:
         cp_epoch = checkpoint_manager.load(
             args.checkpoint,

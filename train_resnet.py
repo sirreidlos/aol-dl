@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import dataclasses
 from typing import Tuple
 import torch.backends.cudnn as cudnn
 import torch
@@ -29,6 +30,7 @@ class Args:
     lr: float
     grad_clip: float | None
     checkpoint_prefix: str
+    exclude_bn: bool
 
 
 def parse_args() -> Args:
@@ -101,6 +103,7 @@ def parse_args() -> Args:
         help="Gradient clipping threshold (None to disable)",
     )
     parser.add_argument("--checkpoint_prefix", type=str, default="srresnet_")
+    parser.add_argument("--exclude_bn", action="store_true")
 
     args = parser.parse_args()
 
@@ -122,6 +125,7 @@ def main():
         large_kernel_size=args.large_kernel,
         small_kernel_size=args.small_kernel,
         channels=args.channels,
+        include_bn=not args.exclude_bn,
     )
 
     model = ResNet(config).to(device)
@@ -187,6 +191,7 @@ def main():
                 "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "loss": total_loss,
+                "config": dataclasses.asdict(config),
             },
             f"{args.checkpoints_dir}/{args.checkpoint_prefix}{epoch + 1}.pth.tar",
         )

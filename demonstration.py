@@ -119,13 +119,17 @@ def main(args: Args):
     assert not isinstance(lr, Image.Image)
 
     print("Loading models...")
-    # resnet = torch.load(args.resnet, weights_only=False)["model"].to(device)
-    resnet = ResNet(ResNetConfig(scaling_factor=4))
-    resnet.load_state_dict(torch.load(args.resnet)["model"])
+    resnet_state_dict = torch.load(args.resnet, weights_only=False)
+    resnet_config_dict = resnet_state_dict.get("config", {})
+    resnet_config = ResNetConfig(**resnet_config_dict)
+    resnet = ResNet(resnet_config)
+    resnet.load_state_dict(resnet_state_dict["model"])
     resnet = resnet.to(device)
 
-    # generator = torch.load(args.gan, weights_only=False)["generator"].to(device)
-    generator = Generator(GeneratorConfig(scaling_factor=4))
+    generator_state_dict = torch.load(args.gan, weights_only=False)
+    generator_config_dict = generator_state_dict.get("config", {})
+    generator_config = GeneratorConfig(**generator_config_dict)
+    generator = Generator(generator_config)
     generator.load_state_dict(torch.load(args.gan, map_location=device)["generator"])
     generator = generator.to(device)
 
@@ -148,7 +152,7 @@ def main(args: Args):
         print("GAN complete...")
 
     resnet_sr = convert_image(resnet_sr.clamp(-1, 1), "[-1, 1]", "pil")
-    generator_sr = convert_image(generator_sr, "[-1, 1]", "pil")
+    generator_sr = convert_image(generator_sr.clamp(-1, 1), "[-1, 1]", "pil")
     assert not isinstance(resnet_sr, torch.Tensor)
     assert not isinstance(generator_sr, torch.Tensor)
 

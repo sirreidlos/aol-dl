@@ -2,14 +2,17 @@ from torch import nn, Tensor
 from dataclasses import dataclass
 import math
 
+from torch._C import _IncludeDispatchKeyGuard
+
 
 @dataclass
 class ResNetConfig:
     residual_block_count: int = 16
-    scaling_factor: int = 2
+    scaling_factor: int = 4
     large_kernel_size: int = 9
     small_kernel_size: int = 3
     channels: int = 64
+    include_bn: bool = True
 
     def __post_init__(self):
         assert self.large_kernel_size % 2 == 1, "large_kernel_size must be odd"
@@ -24,6 +27,7 @@ class ResNetConfig:
 class ResidualBlock(nn.Module):
     def __init__(self, config: ResNetConfig) -> None:
         super(ResidualBlock, self).__init__()
+        self.include_bn = config.include_bn
 
         self.conv1 = nn.Conv2d(
             in_channels=config.channels,
@@ -32,7 +36,6 @@ class ResidualBlock(nn.Module):
             stride=1,
             padding=config.small_kernel_size // 2,
         )
-        self.bn1 = nn.BatchNorm2d(num_features=config.channels)
         self.prelu1 = nn.PReLU()
         self.conv2 = nn.Conv2d(
             in_channels=config.channels,
@@ -41,16 +44,20 @@ class ResidualBlock(nn.Module):
             stride=1,
             padding=config.small_kernel_size // 2,
         )
-        self.bn2 = nn.BatchNorm2d(num_features=config.channels)
+        if self.include_bn:
+            self.bn1 = nn.BatchNorm2d(num_features=config.channels)
+            self.bn2 = nn.BatchNorm2d(num_features=config.channels)
 
     def forward(self, x: Tensor) -> Tensor:
         residual = x
 
         out = self.conv1(x)
-        out = self.bn1(out)
+        if self.include_bn:
+            out = self.bn1(out)
         out = self.prelu1(out)
         out = self.conv2(out)
-        out = self.bn2(out)
+        if self.include_bn:
+            out = self.bn2(out)
 
         out += residual
 
@@ -82,6 +89,7 @@ class SubpixelConvolutionalBlock(nn.Module):
 class ResNet(nn.Module):
     def __init__(self, config: ResNetConfig) -> None:
         super(ResNet, self).__init__()
+        self.include_bn = config.include_bn
 
         self.conv1 = nn.Conv2d(
             in_channels=3,
@@ -104,7 +112,8 @@ class ResNet(nn.Module):
             stride=1,
             padding=config.small_kernel_size // 2,
         )
-        self.bn = nn.BatchNorm2d(num_features=64)
+        if self.include_bn:
+            self.bn = nn.BatchNorm2d(num_features=64)
 
         subpixel_convolutional_blocks = []
         for _ in range(config.subpixel_convolutional_block_count):
@@ -131,7 +140,8 @@ class ResNet(nn.Module):
         residual = out
         out = self.residual_blocks(out)
         out = self.conv2(out)
-        out = self.bn(out)
+        if self.include_bn:
+            out = self.bn(out)
         out += residual
 
         out = self.subpixel_convolutional_blocks(out)
