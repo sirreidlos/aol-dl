@@ -13,27 +13,31 @@ import {
   BothModelsView,
   OverlayProgress,
 } from './components';
-import { ModelSelection, ViewMode, ImageData } from './types';
+import { ModelSelection, ViewMode, ImageData, SingleModelType } from './types';
 
 // Demo images for testing - replace with actual API integration
 const DEMO_IMAGES = {
   original: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&q=80',
-  resnet: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&q=95',
-  gan: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&q=95',
+  srgan: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&q=95',
+  srresnet: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&q=95',
+  srragan: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&q=95',
+  srranet: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&q=95',
 };
 
 function App() {
   const [modelSelection, setModelSelection] = useState<ModelSelection>({
     mode: 'single',
-    single: 'resnet',
-    left: 'resnet',
-    right: 'gan',
+    single: 'srresnet',
+    left: 'srresnet',
+    right: 'srgan',
   });
   const [viewMode, setViewMode] = useState<ViewMode>('side-by-side');
   const [images, setImages] = useState<ImageData>({
     original: null,
-    resnet: null,
-    gan: null,
+    srgan: null,
+    srresnet: null,
+    srragan: null,
+    srranet: null,
   });
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -44,42 +48,98 @@ function App() {
   const [processingProgress, setProcessingProgress] = useState(0);
   const [currentTile, setCurrentTile] = useState<{x1: number, y1: number, x2: number, y2: number, current: number, total: number} | null>(null);
   const [modelInitialized, setModelInitialized] = useState(false);
+  const [currentFile, setCurrentFile] = useState<File | null>(null);
   const processingRef = useRef(false);
+  const initializingRef = useRef(false);
   
   // Track ImageData for progress visualization
   const [inputImageData, setInputImageData] = useState<globalThis.ImageData | null>(null);
   const outputImageDataRef = useRef<globalThis.ImageData | null>(null);
   const overlayOutputUpdateRef = useRef<(tile: any, tileImageData: globalThis.ImageData) => void>(() => {});
 
-  // Initialize ONNX model when component mounts
+  // Initialize ONNX model when component mounts or model selection changes
   useEffect(() => {
-    console.log('App mounted, starting model initialization');
+    // Prevent multiple initializations
+    if (initializingRef.current) {
+      console.log('Already initializing model, skipping...');
+      return;
+    }
+
+    console.log('Model selection changed, initializing model');
     const initModel = async () => {
+      initializingRef.current = true;
       try {
-        console.log('Calling onnxService.initializeModel...');
-        await onnxService.initializeModel();
+        const modelPath = getModelPath(modelSelection.mode === 'single' ? modelSelection.single : modelSelection.left);
+        console.log('Calling onnxService.initializeModel with:', modelPath);
+        await onnxService.initializeModel(modelPath);
         console.log('ONNX model initialized successfully');
+        console.log('Setting modelInitialized to true...');
         setModelInitialized(true);
+        console.log('modelInitialized state set');
       } catch (error) {
         console.error('Failed to initialize ONNX model:', error);
+      } finally {
+        initializingRef.current = false;
       }
     };
     initModel();
-  }, []);
+  }, [modelSelection.mode === 'single' ? modelSelection.single : modelSelection.left]);
 
-  const processImageWithModel = useCallback(async (file: File) => {
+  // Handle image processing when model is initialized or selection changes
+  useEffect(() => {
+    console.log('Image processing useEffect triggered:', { currentFile: !!currentFile, modelInitialized });
+    // Only process if we have a current file AND the model is fully initialized
+    if (currentFile && modelInitialized) {
+      // Process image for the currently selected model(s)
+      const processSelectedModels = async () => {
+        if (modelSelection.mode === 'single') {
+          // Always process when model changes in single mode
+          console.log('Processing image for model:', modelSelection.single);
+          await processImageWithModel(currentFile, modelSelection.single);
+        } else {
+          // Compare mode - process both models if needed
+          if (!images[modelSelection.left]) {
+            console.log('Processing image for left model:', modelSelection.left);
+            await processImageWithModel(currentFile, modelSelection.left);
+          }
+          if (!images[modelSelection.right]) {
+            console.log('Processing image for right model:', modelSelection.right);
+            await processImageWithModel(currentFile, modelSelection.right);
+          }
+        }
+      };
+      processSelectedModels();
+    }
+  }, [modelSelection, modelInitialized, currentFile]); // Add modelSelection back to dependencies
+
+  const getModelPath = (modelType: SingleModelType): string => {
+    return `models/${modelType}.onnx`;
+  };
+
+  const processImageWithModel = useCallback(async (file: File, specificModel?: SingleModelType) => {
     if (processingRef.current) return;
     
-    // Ensure model is initialized
+    console.log('processImageWithModel called with modelInitialized:', modelInitialized);
+    
+    // Ensure model is initialized - check the actual ONNXService state, not just React state
     if (!modelInitialized) {
-      try {
-        await onnxService.initializeModel();
-        setModelInitialized(true);
-      } catch (error) {
-        console.error('Failed to initialize ONNX model:', error);
-        throw error;
+      console.log('Model not initialized, waiting for initialization...');
+      
+      // Wait for model to be initialized
+      let attempts = 0;
+      while (!modelInitialized && attempts < 50) { // Wait up to 5 seconds
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+        console.log(`Waiting for model initialization... attempt ${attempts}, modelInitialized: ${modelInitialized}`);
+      }
+      
+      if (!modelInitialized) {
+        console.error('Model failed to initialize within timeout period.');
+        throw new Error('Model failed to initialize within timeout period.');
       }
     }
+    
+    console.log('Model is initialized, proceeding with image processing...');
     
     // Declare originalDataUrl outside try-catch to make it accessible
     let originalDataUrl: string | null = null;
@@ -93,12 +153,16 @@ function App() {
       const imageData = await fileToImageData(file);
       originalDataUrl = URL.createObjectURL(file);
       setImages(prev => ({ ...prev, original: originalDataUrl }));
+      setCurrentFile(file); // Store current file for re-processing
       
       // Set input ImageData for progress visualization
       setInputImageData(imageData);
       outputImageDataRef.current = null; // Clear ref as well
       
       setProcessingProgress(30);
+      
+      // Determine which model to use for processing
+      const targetModel = specificModel || (modelSelection.mode === 'single' ? modelSelection.single : modelSelection.left);
       
       // Process with ONNX model
       const processedImageData = await onnxService.processImage(imageData, {
@@ -125,11 +189,10 @@ function App() {
       
       setProcessingProgress(90);
       
-      // Update state with processed image
+      // Update state with processed image for the specific model
       setImages(prev => ({
         ...prev,
-        resnet: processedDataUrl, // Using resnet for ONNX model output
-        gan: processedDataUrl, // Same for GAN for now
+        [targetModel]: processedDataUrl,
       }));
       
       setProcessingProgress(100);
@@ -140,10 +203,10 @@ function App() {
       // Fallback to original image if processing fails
       console.log('Falling back to original image');
       if (originalDataUrl) {
+        const targetModel = specificModel || (modelSelection.mode === 'single' ? modelSelection.single : modelSelection.left);
         setImages(prev => ({
           ...prev,
-          resnet: originalDataUrl,
-          gan: originalDataUrl,
+          [targetModel]: originalDataUrl,
         }));
       }
       
@@ -161,26 +224,29 @@ function App() {
       setProcessingProgress(0);
       setCurrentTile(null);
     }
-  }, []);
+  }, [modelInitialized, modelSelection]); // Add dependencies to update when modelInitialized changes
 
   const handleImageUpload = useCallback(async (file: File) => {
     await processImageWithModel(file);
   }, [processImageWithModel]);
 
   const handleClearImage = useCallback(() => {
-    setImages({ original: null, resnet: null, gan: null });
+    setImages({ original: null, srgan: null, srresnet: null, srragan: null, srranet: null });
+    setCurrentFile(null);
   }, []);
 
-  const getModelImage = (model: 'resnet' | 'gan') => {
-    return model === 'resnet' ? images.resnet : images.gan;
+  const getModelImage = (model: SingleModelType): string | null => {
+    return images[model];
   };
 
-  const getModelName = (model: 'resnet' | 'gan') => {
-    if (model === 'resnet') {
-      return 'SRResNet (ONNX)';
-    } else {
-      return 'SRGAN (ONNX)';
-    }
+  const getModelName = (model: SingleModelType) => {
+    const modelNames = {
+      srgan: 'SRGAN',
+      srresnet: 'SRResNet',
+      srragan: 'SRRaGAN',
+      srranet: 'SRRaNet'
+    };
+    return `${modelNames[model]} (ONNX)`;
   };
 
   const renderComparison = () => {
@@ -254,8 +320,10 @@ function App() {
       console.error('Error loading demo image:', error);
       setImages({
         original: DEMO_IMAGES.original,
-        resnet: DEMO_IMAGES.original, // Fallback to original if processing fails
-        gan: DEMO_IMAGES.original,
+        srgan: DEMO_IMAGES.original, // Fallback to original if processing fails
+        srresnet: DEMO_IMAGES.original,
+        srragan: DEMO_IMAGES.original,
+        srranet: DEMO_IMAGES.original,
       });
     } finally {
       setIsProcessing(false);
@@ -300,7 +368,7 @@ function App() {
       {/* Main Content */}
       <main className="relative z-10 max-w-7xl mx-auto px-6 py-8">
         {/* Controls */}
-        <div className="glass rounded-2xl p-6 mb-8 animate-slide-up">
+        <div className="glass rounded-2xl p-6 mb-8 animate-slide-up relative z-[9999]">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Upload Section */}
             <div className="lg:col-span-1">

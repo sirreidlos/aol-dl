@@ -18,27 +18,35 @@ export class ONNXService {
   private worker: Worker | null = null;
   private initialized = false;
   private initPromise: Promise<void> | null = null;
+  private currentModel: string = '';
 
   async initializeModel(modelPathAbs: string = 'models/srgan.onnx'): Promise<void> {
     const modelPath = import.meta.env.BASE_URL + modelPathAbs;
     console.log("MODEL PATH", modelPath);
-    console.log('initializeModel called, initialized:', this.initialized, 'worker:', !!this.worker);
+    console.log('initializeModel called, initialized:', this.initialized, 'worker:', !!this.worker, 'currentModel:', this.currentModel);
     
-    if (this.initialized && this.worker) {
-      console.log('Model already initialized');
+    // If same model is already initialized, return
+    if (this.initialized && this.worker && this.currentModel === modelPathAbs) {
+      console.log('Model already initialized:', modelPathAbs);
       return;
     }
     
-    // Return existing promise if initialization is in progress
-    if (this.initPromise) {
+    // Return existing promise if initialization is in progress for the SAME model
+    if (this.initPromise && this.currentModel === modelPathAbs) {
       return this.initPromise;
     }
     
-    this.initPromise = this.doInitialize(modelPath);
+    // Clean up existing worker if different model
+    if (this.worker && this.currentModel !== modelPathAbs) {
+      console.log('Switching from model:', this.currentModel, 'to:', modelPathAbs);
+      this.cleanup();
+    }
+    
+    this.initPromise = this.doInitialize(modelPath, modelPathAbs);
     return this.initPromise;
   }
   
-  private async doInitialize(modelPath: string): Promise<void> {
+  private async doInitialize(modelPath: string, modelPathAbs: string): Promise<void> {
     try {
       // Create worker with separate file
       this.worker = new Worker(new URL('../workers/onnxWorker.ts', import.meta.url), {
@@ -76,7 +84,8 @@ export class ONNXService {
       });
       
       this.initialized = true;
-      console.log('ONNX model initialized successfully');
+      this.currentModel = modelPathAbs;
+      console.log('ONNX model initialized successfully:', modelPathAbs);
     } catch (error) {
       console.error('Failed to initialize ONNX model:', error);
       this.cleanup();
@@ -91,6 +100,7 @@ export class ONNXService {
     }
     this.initialized = false;
     this.initPromise = null;
+    this.currentModel = '';
   }
 
   async processImage(imageData: ImageData, callbacks?: ProcessingCallbacks): Promise<ImageData> {

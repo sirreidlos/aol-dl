@@ -9,16 +9,28 @@ interface ModelSelectorProps {
 
 const models: { id: SingleModelType; name: string; description: string; icon: React.ReactNode }[] = [
   {
-    id: 'resnet',
+    id: 'srresnet',
     name: 'SRResNet',
     description: 'Fast & reliable upscaling',
     icon: <Cpu className="w-4 h-4" />,
   },
   {
-    id: 'gan',
+    id: 'srgan',
     name: 'SRGAN',
     description: 'Photorealistic details',
     icon: <Sparkles className="w-4 h-4" />,
+  },
+  {
+    id: 'srragan',
+    name: 'SRRAGAN',
+    description: 'Enhanced GAN quality',
+    icon: <Layers className="w-4 h-4" />,
+  },
+  {
+    id: 'srranet',
+    name: 'SRRANET',
+    description: 'Advanced neural network',
+    icon: <Square className="w-4 h-4" />,
   },
 ];
 
@@ -50,7 +62,7 @@ const ModelDropdown: React.FC<ModelDropdownProps> = ({ label, value, onChange, v
       <label className="text-xs font-medium text-silver uppercase tracking-wider">
         {label}
       </label>
-      <div className="relative">
+      <div className="relative z-[9999]">
         <button
           onClick={() => setIsOpen(!isOpen)}
           className={`
@@ -73,7 +85,7 @@ const ModelDropdown: React.FC<ModelDropdownProps> = ({ label, value, onChange, v
 
         {/* Dropdown Menu */}
         {isOpen && (
-          <div className="absolute top-full left-0 right-0 mt-2 z-50 animate-fade-in">
+          <div className="absolute top-full left-0 right-0 mt-2 z-[9999] animate-fade-in">
             <div className="bg-obsidian border border-white/10 rounded-xl overflow-hidden shadow-xl shadow-black/50">
               {models.map((model) => (
                 <button

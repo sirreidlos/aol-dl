@@ -1,4 +1,4 @@
-export type SingleModelType = 'resnet' | 'gan';
+export type SingleModelType = 'srgan' | 'srresnet' | 'srragan' | 'srranet';
 
 export type CompareMode = 'single' | 'compare';
 
@@ -13,8 +13,10 @@ export interface ModelSelection {
 
 export interface ImageData {
   original: string | null;
-  resnet: string | null;
-  gan: string | null;
+  srgan: string | null;
+  srresnet: string | null;
+  srragan: string | null;
+  srranet: string | null;
 }
 
 export interface ZoomState {
