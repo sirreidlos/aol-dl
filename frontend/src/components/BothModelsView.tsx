@@ -1,8 +1,18 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { ZoomIn, ZoomOut, Move } from 'lucide-react';
 import { ZoomState, DualComparisonProps } from '../types';
+import { TileOverlay } from './TileOverlay';
 
-interface BothModelsViewProps extends DualComparisonProps {}
+interface BothModelsViewProps extends DualComparisonProps {
+  processingTile?: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    current: number;
+    total: number;
+  } | null;
+}
 
 export const BothModelsView: React.FC<BothModelsViewProps> = ({
   originalImage,
@@ -10,6 +20,7 @@ export const BothModelsView: React.FC<BothModelsViewProps> = ({
   rightImage,
   leftModelName,
   rightModelName,
+  processingTile,
 }) => {
   const [zoom, setZoom] = useState<ZoomState>({ scale: 1, x: 50, y: 50 });
   const [isHovering, setIsHovering] = useState(false);
@@ -83,6 +94,7 @@ export const BothModelsView: React.FC<BothModelsViewProps> = ({
             style={getTransformStyle()}
             draggable={false}
           />
+          {isOriginal && processingTile && <TileOverlay imageSrc={image} tile={processingTile} />}
         </div>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { ComparisonProps } from '../types';
+import { TileOverlay } from './TileOverlay';
 
 interface SliderViewProps extends ComparisonProps {}
 
@@ -7,6 +8,7 @@ export const SliderView: React.FC<SliderViewProps> = ({
   originalImage,
   processedImage,
   modelName,
+  processingTile,
 }) => {
   const [sliderPosition, setSliderPosition] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
@@ -78,6 +80,7 @@ export const SliderView: React.FC<SliderViewProps> = ({
           className="w-full h-auto block"
           draggable={false}
         />
+        {processingTile && <TileOverlay imageSrc={originalImage} tile={processingTile} />}
 
         {/* Processed Image (Clipped) */}
         <div

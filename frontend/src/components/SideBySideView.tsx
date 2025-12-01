@@ -1,12 +1,23 @@
 import React from 'react';
 import { ComparisonProps } from '../types';
+import { TileOverlay } from './TileOverlay';
 
-interface SideBySideViewProps extends ComparisonProps {}
+interface SideBySideViewProps extends ComparisonProps {
+  processingTile?: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    current: number;
+    total: number;
+  } | null;
+}
 
 export const SideBySideView: React.FC<SideBySideViewProps> = ({
   originalImage,
   processedImage,
   modelName,
+  processingTile,
 }) => {
   return (
     <div className="grid grid-cols-2 gap-4 animate-fade-in">
@@ -24,6 +35,7 @@ export const SideBySideView: React.FC<SideBySideViewProps> = ({
             alt="Original"
             className="w-full h-auto object-contain"
           />
+          {processingTile && <TileOverlay imageSrc={originalImage} tile={processingTile} />}
         </div>
       </div>
 

@@ -1,5 +1,8 @@
-import React, { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Wand2, Github, Sparkles } from 'lucide-react';
+import { ONNXService } from './utils/onnxService';
+const onnxService = new ONNXService();
+import { fileToImageData, imageDataToDataUrl } from './utils/imageUtils';
 import {
   ModelSelector,
   ViewModeToggle,
@@ -8,6 +11,7 @@ import {
   SliderView,
   SyncZoomView,
   BothModelsView,
+  OverlayProgress,
 } from './components';
 import { ModelSelection, ViewMode, ImageData } from './types';
 
@@ -36,24 +40,132 @@ function App() {
   // Check if we're in compare mode with different models
   const isComparing = modelSelection.mode === 'compare' && modelSelection.left !== modelSelection.right;
 
-  const handleImageUpload = useCallback(async (_file: File, dataUrl: string) => {
-    setImages((prev) => ({ ...prev, original: dataUrl }));
-    setIsProcessing(true);
+  // Track processing progress (0-100%)
+  const [processingProgress, setProcessingProgress] = useState(0);
+  const [currentTile, setCurrentTile] = useState<{x1: number, y1: number, x2: number, y2: number, current: number, total: number} | null>(null);
+  const [modelInitialized, setModelInitialized] = useState(false);
+  const processingRef = useRef(false);
+  
+  // Track ImageData for progress visualization
+  const [inputImageData, setInputImageData] = useState<globalThis.ImageData | null>(null);
+  const outputImageDataRef = useRef<globalThis.ImageData | null>(null);
+  const overlayOutputUpdateRef = useRef<(tile: any, tileImageData: globalThis.ImageData) => void>(() => {});
 
-    // Simulate API call - replace with actual API integration
-    // In production, you would send the file to your backend API
-    // that runs the SR models and returns the upscaled images
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // For demo purposes, using the same image
-    // Replace with actual API response
-    setImages({
-      original: dataUrl,
-      resnet: dataUrl, // Would be the actual SRResNet result
-      gan: dataUrl, // Would be the actual SRGAN result
-    });
-    setIsProcessing(false);
+  // Initialize ONNX model when component mounts
+  useEffect(() => {
+    console.log('App mounted, starting model initialization');
+    const initModel = async () => {
+      try {
+        console.log('Calling onnxService.initializeModel...');
+        await onnxService.initializeModel();
+        console.log('ONNX model initialized successfully');
+        setModelInitialized(true);
+      } catch (error) {
+        console.error('Failed to initialize ONNX model:', error);
+      }
+    };
+    initModel();
   }, []);
+
+  const processImageWithModel = useCallback(async (file: File) => {
+    if (processingRef.current) return;
+    
+    // Ensure model is initialized
+    if (!modelInitialized) {
+      try {
+        await onnxService.initializeModel();
+        setModelInitialized(true);
+      } catch (error) {
+        console.error('Failed to initialize ONNX model:', error);
+        throw error;
+      }
+    }
+    
+    // Declare originalDataUrl outside try-catch to make it accessible
+    let originalDataUrl: string | null = null;
+    
+    try {
+      processingRef.current = true;
+      setIsProcessing(true);
+      setProcessingProgress(0);
+      
+      // Convert file to ImageData
+      const imageData = await fileToImageData(file);
+      originalDataUrl = URL.createObjectURL(file);
+      setImages(prev => ({ ...prev, original: originalDataUrl }));
+      
+      // Set input ImageData for progress visualization
+      setInputImageData(imageData);
+      outputImageDataRef.current = null; // Clear ref as well
+      
+      setProcessingProgress(30);
+      
+      // Process with ONNX model
+      const processedImageData = await onnxService.processImage(imageData, {
+        onTileStart: (tile: any) => {
+          setCurrentTile(tile);
+        },
+        onProgress: (progress: any) => {
+          setProcessingProgress(progress);
+        },
+        onComplete: () => {
+          setCurrentTile(null);
+        },
+        onTileUpdate: (tile: any, tileImageData: globalThis.ImageData) => {
+          console.log('Received tile update for tile', tile.current, 'dimensions:', tileImageData.width, 'x', tileImageData.height);
+          
+          // Call overlay update with tile-specific data
+          if (overlayOutputUpdateRef.current) {
+            overlayOutputUpdateRef.current(tile, tileImageData);
+          }
+        }
+      });
+      
+      const processedDataUrl = imageDataToDataUrl(processedImageData);
+      
+      setProcessingProgress(90);
+      
+      // Update state with processed image
+      setImages(prev => ({
+        ...prev,
+        resnet: processedDataUrl, // Using resnet for ONNX model output
+        gan: processedDataUrl, // Same for GAN for now
+      }));
+      
+      setProcessingProgress(100);
+      
+    } catch (error) {
+      console.error('Error processing image:', error);
+      
+      // Fallback to original image if processing fails
+      console.log('Falling back to original image');
+      if (originalDataUrl) {
+        setImages(prev => ({
+          ...prev,
+          resnet: originalDataUrl,
+          gan: originalDataUrl,
+        }));
+      }
+      
+      setProcessingProgress(100);
+      
+      // Show error to user
+      alert('Image processing failed. Showing original image instead. Error: ' + 
+            (error instanceof Error ? error.message : 'Unknown error'));
+      processingRef.current = false;
+      setProcessingProgress(0);
+      setCurrentTile(null);
+    } finally {
+      setIsProcessing(false);
+      processingRef.current = false;
+      setProcessingProgress(0);
+      setCurrentTile(null);
+    }
+  }, []);
+
+  const handleImageUpload = useCallback(async (file: File) => {
+    await processImageWithModel(file);
+  }, [processImageWithModel]);
 
   const handleClearImage = useCallback(() => {
     setImages({ original: null, resnet: null, gan: null });
@@ -64,11 +176,15 @@ function App() {
   };
 
   const getModelName = (model: 'resnet' | 'gan') => {
-    return model === 'resnet' ? 'SRResNet' : 'SRGAN';
+    if (model === 'resnet') {
+      return 'SRResNet (ONNX)';
+    } else {
+      return 'SRGAN (ONNX)';
+    }
   };
 
   const renderComparison = () => {
-    if (!images.original || isProcessing) return null;
+    if (!images.original) return null;
 
     // Compare mode with different models
     if (isComparing) {
@@ -84,6 +200,7 @@ function App() {
           rightImage={rightImage}
           leftModelName={getModelName(modelSelection.left)}
           rightModelName={getModelName(modelSelection.right)}
+          processingTile={isProcessing ? currentTile : null}
         />
       );
     }
@@ -98,6 +215,7 @@ function App() {
       originalImage: images.original,
       processedImage,
       modelName: getModelName(selectedModel),
+      processingTile: isProcessing ? currentTile : null,
     };
 
     switch (viewMode) {
@@ -120,12 +238,29 @@ function App() {
     return `${getModelName(selectedModel)} Result`;
   };
 
-  const useDemoImages = () => {
-    setImages({
-      original: DEMO_IMAGES.original,
-      resnet: DEMO_IMAGES.resnet,
-      gan: DEMO_IMAGES.gan,
-    });
+  const useDemoImages = async () => {
+    try {
+      setIsProcessing(true);
+      setProcessingProgress(0);
+      
+      // Load demo image
+      const response = await fetch(DEMO_IMAGES.original);
+      const blob = await response.blob();
+      const file = new File([blob], 'demo.jpg', { type: 'image/jpeg' });
+      
+      // Process the demo image
+      await processImageWithModel(file);
+    } catch (error) {
+      console.error('Error loading demo image:', error);
+      setImages({
+        original: DEMO_IMAGES.original,
+        resnet: DEMO_IMAGES.original, // Fallback to original if processing fails
+        gan: DEMO_IMAGES.original,
+      });
+    } finally {
+      setIsProcessing(false);
+      setProcessingProgress(0);
+    }
   };
 
   return (
@@ -210,26 +345,70 @@ function App() {
               <Wand2 className="w-8 h-8 text-accent-bright animate-pulse" />
             </div>
             <h3 className="font-display font-semibold text-xl text-pearl mb-2">
-              Processing your image...
+              {processingProgress === 0 ? 'Initializing AI model...' : 'Processing your image...'}
             </h3>
             <p className="text-silver">
-              Running super resolution models. This may take a few seconds.
+              {processingProgress === 0 
+                ? 'Loading the super resolution model. This may take a few seconds.'
+                : 'Running super resolution models. This may take a few seconds.'
+              }
             </p>
             <div className="mt-6 w-48 h-1 bg-slate/50 rounded-full mx-auto overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-accent to-accent-bright animate-shimmer" style={{ backgroundSize: '200% 100%' }} />
+              <div 
+                className="h-full bg-gradient-to-r from-accent to-accent-bright transition-all duration-300 ease-out" 
+                style={{ 
+                  width: `${processingProgress}%`,
+                  backgroundSize: '200% 100%',
+                  transitionProperty: 'width',
+                  transitionDuration: '300ms',
+                  transitionTimingFunction: 'ease-out'
+                }} 
+              />
             </div>
+            <p className="text-xs text-silver mt-2">
+              {processingProgress === 0 
+                ? 'Loading model...'
+                : processingProgress > 0 
+                  ? `Processing: ${Math.round(processingProgress)}%`
+                  : 'Initializing model...'
+              }
+            </p>
+          </div>
+        )}
+
+        {/* Inference Progress Visualization */}
+        {isProcessing && inputImageData && (
+          <div className="glass rounded-2xl p-6 animate-slide-up" style={{ animationDelay: '100ms' }}>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="font-display font-semibold text-lg text-pearl">
+                {isProcessing ? 'Processing Progress' : 'Processing Complete'}
+              </h2>
+              <div className="flex items-center gap-2 text-sm text-silver">
+                <span className={`w-2 h-2 rounded-full ${isProcessing ? 'bg-yellow-500' : 'bg-green-500'} animate-pulse`} />
+                {isProcessing ? 'Processing tiles...' : 'Processing complete'}
+              </div>
+            </div>
+            <OverlayProgress
+              inputImageData={inputImageData}
+              currentTile={currentTile}
+              progress={processingProgress}
+              scale={4}
+              onTileUpdate={(updateFn) => {
+                overlayOutputUpdateRef.current = updateFn;
+              }}
+            />
           </div>
         )}
 
         {/* Comparison View */}
-        {!isProcessing && images.original && (
+        {images.original && !isProcessing && (
           <div className="glass rounded-2xl p-6 animate-slide-up" style={{ animationDelay: '100ms' }}>
             <div className="flex items-center justify-between mb-6">
               <h2 className="font-display font-semibold text-lg text-pearl">
                 {getResultTitle()}
               </h2>
               <div className="flex items-center gap-2 text-sm text-silver">
-                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                <span className="w-2 h-2 rounded-full bg-green-500" />
                 Processing complete
               </div>
             </div>
@@ -244,12 +423,19 @@ function App() {
               <Wand2 className="w-10 h-10 text-silver" />
             </div>
             <h3 className="font-display font-semibold text-2xl text-pearl mb-3">
-              Ready to enhance your images
+              {modelInitialized ? 'Ready to enhance your images' : 'Loading AI model...'}
             </h3>
             <p className="text-silver max-w-md mx-auto">
-              Upload an image to see how our super resolution models can upscale and enhance it.
-              Choose a single model or compare SRResNet and SRGAN side by side.
+              {modelInitialized 
+                ? 'Upload an image to see how our super resolution models can upscale and enhance it. Choose a single model or compare SRResNet and SRGAN side by side.'
+                : 'Initializing the super resolution model. This may take a few seconds...'
+              }
             </p>
+            {!modelInitialized && (
+              <div className="mt-4 w-32 h-1 bg-slate/50 rounded-full mx-auto overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-accent to-accent-bright animate-shimmer" style={{ backgroundSize: '200% 100%' }} />
+              </div>
+            )}
           </div>
         )}
       </main>

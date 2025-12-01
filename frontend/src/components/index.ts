@@ -5,5 +5,7 @@ export { SideBySideView } from './SideBySideView';
 export { SliderView } from './SliderView';
 export { SyncZoomView } from './SyncZoomView';
 export { BothModelsView } from './BothModelsView';
+export { InferenceProgress } from './InferenceProgress';
+export { OverlayProgress } from './OverlayProgress';
 export type { SingleModelType, ModelSelection, ViewMode, ImageData, ZoomState, ComparisonProps, DualComparisonProps } from '../types';
 

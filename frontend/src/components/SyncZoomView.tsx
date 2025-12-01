@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { ZoomIn, ZoomOut, Move } from 'lucide-react';
 import { ComparisonProps, ZoomState } from '../types';
+import { TileOverlay } from './TileOverlay';
 
 interface SyncZoomViewProps extends ComparisonProps {}
 
@@ -8,6 +9,7 @@ export const SyncZoomView: React.FC<SyncZoomViewProps> = ({
   originalImage,
   processedImage,
   modelName,
+  processingTile,
 }) => {
   const [zoom, setZoom] = useState<ZoomState>({ scale: 1, x: 50, y: 50 });
   const [isHovering, setIsHovering] = useState(false);
@@ -100,6 +102,7 @@ export const SyncZoomView: React.FC<SyncZoomViewProps> = ({
                 style={getTransformStyle()}
                 draggable={false}
               />
+              {processingTile && <TileOverlay imageSrc={originalImage} tile={processingTile} />}
             </div>
           </div>
         </div>

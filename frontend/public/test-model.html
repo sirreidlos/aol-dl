@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test ONNX Model Loading</title>
+</head>
+<body>
+    <h1>Testing ONNX Model Loading</h1>
+    <div id="status">Loading...</div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.15.1/dist/ort.min.js"></script>
+    <script>
+        async function testModelLoading() {
+            const status = document.getElementById('status');
+            
+            try {
+                status.innerHTML = 'Attempting to load model...';
+                
+                // Try to fetch the model file first
+                const response = await fetch('/srragan_psnr_nobn_2.onnx');
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch model: ${response.status}`);
+                }
+                
+                status.innerHTML = 'Model file found, creating session...';
+                
+                // Create inference session
+                const session = await ort.InferenceSession.create('/srragan_psnr_nobn_2.onnx', {
+                    executionProviders: ['webgl', 'cpu']
+                });
+                
+                status.innerHTML = `
+                    <h3>Success!</h3>
+                    <p>Input names: ${session.inputNames}</p>
+                    <p>Output names: ${session.outputNames}</p>
+                `;
+                
+            } catch (error) {
+                status.innerHTML = `
+                    <h3>Error:</h3>
+                    <p>${error.message}</p>
+                    <p>Check browser console for more details</p>
+                `;
+                console.error('Model loading error:', error);
+            }
+        }
+        
+        testModelLoading();
+    </script>
+</body>
+</html>

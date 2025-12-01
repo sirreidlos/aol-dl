@@ -116,6 +116,7 @@ cudnn.benchmark = True
 
 def main():
     args = parse_args()
+    print(args)
 
     Path(args.checkpoints_dir).mkdir(parents=True, exist_ok=True)
 
