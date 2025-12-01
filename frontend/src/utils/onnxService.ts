@@ -19,7 +19,9 @@ export class ONNXService {
   private initialized = false;
   private initPromise: Promise<void> | null = null;
 
-  async initializeModel(modelPath: string = '/models/srgan.onnx'): Promise<void> {
+  async initializeModel(modelPathAbs: string = 'models/srgan.onnx'): Promise<void> {
+    const modelPath = import.meta.env.BASE_URL + modelPathAbs;
+    console.log("MODEL PATH", modelPath);
     console.log('initializeModel called, initialized:', this.initialized, 'worker:', !!this.worker);
     
     if (this.initialized && this.worker) {
