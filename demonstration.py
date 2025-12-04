@@ -127,7 +127,7 @@ def main(args: Args):
     resnet = resnet.to(device)
 
     generator_state_dict = torch.load(args.gan, weights_only=False)
-    generator_config_dict = generator_state_dict.get("config", {})
+    generator_config_dict = generator_state_dict.get("generator_config", {})
     generator_config = GeneratorConfig(**generator_config_dict)
     generator = Generator(generator_config)
     generator.load_state_dict(torch.load(args.gan, map_location=device)["generator"])

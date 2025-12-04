@@ -308,7 +308,13 @@ class SRGANContentLossStrategy(SRGANLossStrategy):
         )
         perceptual_loss = content_loss + self.adversarial_loss_weight * adversarial_loss
 
-        return perceptual_loss
+        loss_dict = LossDict(
+            g_perceptual=content_loss.item(),
+            g_adversarial=adversarial_loss.item(),
+            g_total=perceptual_loss.item(),
+        )
+
+        return perceptual_loss, loss_dict
 
     def calculate_loss_d(
         self,
@@ -549,8 +555,10 @@ class SRGANTrainer:
             pbar.set_postfix(
                 {
                     "GLoss": f"{loss_dict.g_total:.4f}",
-                    "DLoss": f"{loss_dict.d_loss:.4f}",
-                    "Perc": f"{loss_dict.g_perceptual:.4f}",
+                    "DLoss": f"{loss_dict.d_loss:.4f}" if loss_dict.d_loss else "N/A",
+                    "Perc": f"{loss_dict.g_perceptual:.4f}"
+                    if loss_dict.g_perceptual
+                    else "N/A",
                 }
             )
 
@@ -605,18 +613,19 @@ class SRGANTrainer:
                 g_loss_dict = asdict(g_loss)
 
                 for key in total_g_losses:
-                    total_g_losses[key] += g_loss_dict[key]
+                    if g_loss_dict.get(key) is not None:
+                        total_g_losses[key] += g_loss_dict[key]
                 total_d_loss += d_loss
 
-                batch_pbar.set_postfix(
-                    {
-                        "G": f"{g_loss.g_total:.4f}",
-                        "Perc": f"{g_loss.g_perceptual:.4f}",
-                        "Pix": f"{g_loss.g_pixel:.4f}",
-                        "Adv": f"{g_loss.g_adversarial:.4f}",
-                        "D": f"{d_loss:.4f}",
-                    }
-                )
+                result = {
+                    "G": f"{g_loss.g_total:.4f}",
+                    "Perc": f"{g_loss.g_perceptual:.4f}",
+                    "Pix": f"{g_loss.g_pixel:.4f}" if g_loss.g_pixel else "N/A",
+                    "Adv": f"{g_loss.g_adversarial:.4f}",
+                    "D": f"{d_loss:.4f}",
+                }
+
+                batch_pbar.set_postfix()
 
         num_batches = len(self.train_loader)
         result = {
@@ -749,7 +758,7 @@ def main():
     if args.warmup_model is not None:
         checkpoint = torch.load(args.warmup_model)
         generator.resnet.load_state_dict(checkpoint["model"])
-        generator_optimizer.load_state_dict(checkpoint["optimizer"])
+        # generator_optimizer.load_state_dict(checkpoint["optimizer"])
 
     checkpoint_manager = CheckpointManager(
         args.checkpoints_dir,
