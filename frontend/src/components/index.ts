@@ -7,5 +7,6 @@ export { SyncZoomView } from './SyncZoomView';
 export { BothModelsView } from './BothModelsView';
 export { InferenceProgress } from './InferenceProgress';
 export { OverlayProgress } from './OverlayProgress';
+export { LoadingScreen } from './LoadingScreen';
 export type { SingleModelType, ModelSelection, ViewMode, ImageData, ZoomState, ComparisonProps, DualComparisonProps } from '../types';
 

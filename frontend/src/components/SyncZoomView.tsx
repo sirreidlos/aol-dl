@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { ZoomIn, ZoomOut, Move } from 'lucide-react';
 import { ComparisonProps, ZoomState } from '../types';
 import { TileOverlay } from './TileOverlay';
@@ -31,13 +31,26 @@ export const SyncZoomView: React.FC<SyncZoomViewProps> = ({
     setZoom((prev) => ({ ...prev, scale: Math.max(prev.scale - 0.5, 1) }));
   }, []);
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.2 : 0.2;
-    setZoom((prev) => ({
-      ...prev,
-      scale: Math.max(1, Math.min(4, prev.scale + delta)),
-    }));
+  // Use native event listener with passive: false to properly prevent page scroll
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const delta = e.deltaY > 0 ? -0.2 : 0.2;
+      setZoom((prev) => ({
+        ...prev,
+        scale: Math.max(1, Math.min(4, prev.scale + delta)),
+      }));
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
   }, []);
 
   const getTransformStyle = () => ({
@@ -83,14 +96,13 @@ export const SyncZoomView: React.FC<SyncZoomViewProps> = ({
         onMouseMove={handleMouseMove}
         onMouseEnter={() => setIsHovering(true)}
         onMouseLeave={() => setIsHovering(false)}
-        onWheel={handleWheel}
       >
         {/* Original Image */}
         <div className="relative group">
           <div className="absolute -inset-0.5 bg-gradient-to-r from-slate to-obsidian rounded-xl opacity-50" />
           <div className="relative bg-obsidian rounded-xl overflow-hidden border border-white/5">
             <div className="absolute top-3 left-3 z-10">
-              <span className="px-3 py-1.5 rounded-full text-xs font-medium bg-void/80 backdrop-blur-sm border border-white/10 text-silver">
+              <span className="px-3 py-1.5 rounded-full text-xs font-semibold bg-white/90 backdrop-blur-sm border border-black/10 text-black shadow-md">
                 Original
               </span>
             </div>
@@ -112,7 +124,7 @@ export const SyncZoomView: React.FC<SyncZoomViewProps> = ({
           <div className="absolute -inset-0.5 bg-gradient-to-r from-accent/30 to-accent-bright/30 rounded-xl opacity-50 group-hover:opacity-75 transition-opacity duration-300" />
           <div className="relative bg-obsidian rounded-xl overflow-hidden border border-accent/20">
             <div className="absolute top-3 left-3 z-10">
-              <span className="px-3 py-1.5 rounded-full text-xs font-medium bg-accent/20 backdrop-blur-sm border border-accent/30 text-accent-bright">
+              <span className="px-3 py-1.5 rounded-full text-xs font-semibold bg-white/90 backdrop-blur-sm border border-black/10 text-black shadow-md">
                 {modelName}
               </span>
             </div>

@@ -160,37 +160,30 @@ export const OverlayProgress: React.FC<OverlayProgressProps> = ({
     <div className="overlay-progress">
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Super Resolution Progress ({scale}×)</h3>
+          <h3 className="text-sm font-semibold text-pearl">Processing ({scale}×)</h3>
           {inputImageData && (
-            <span className="text-sm text-gray-600">
+            <span className="text-xs text-silver">
               {inputImageData.width * scale}×{inputImageData.height * scale}
             </span>
           )}
         </div>
         
-        <div className="relative bg-gray-100 rounded-lg overflow-auto flex justify-center items-center p-4">
+        <div className="relative bg-obsidian/50 rounded-lg overflow-auto flex justify-center items-center p-3 border border-white/10">
           <canvas
             ref={canvasRef}
-            className="max-w-full h-auto"
-            style={{ maxHeight: '800px' }}
+            className="max-w-full h-auto rounded"
+            style={{ maxHeight: '450px' }}
           />
           
           {currentTile && (
-            <div className="absolute top-4 left-4 bg-black bg-opacity-75 text-white px-3 py-2 rounded-md text-sm">
+            <div className="absolute top-2 left-2 bg-void/90 text-pearl px-2 py-1 rounded text-xs border border-white/10">
               <div>Tile {currentTile.current}/{currentTile.total}</div>
-              <div className="text-xs opacity-75">
-                ({currentTile.x1}, {currentTile.y1}) → ({currentTile.x2}, {currentTile.y2})
-              </div>
-              <div className="text-xs opacity-75">
-                Scaled: ({currentTile.x1 * scale}, {currentTile.y1 * scale}) → ({currentTile.x2 * scale}, {currentTile.y2 * scale})
-              </div>
             </div>
           )}
           
           {progress > 0 && progress < 100 && (
-            <div className="absolute top-4 right-4 bg-black bg-opacity-75 text-white px-3 py-2 rounded-md text-sm">
-              <div>Processing...</div>
-              <div className="text-xs opacity-75">{Math.round(progress)}%</div>
+            <div className="absolute top-2 right-2 bg-void/90 text-pearl px-2 py-1 rounded text-xs border border-white/10">
+              <div>{Math.round(progress)}%</div>
             </div>
           )}
         </div>

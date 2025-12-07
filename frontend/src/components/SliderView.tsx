@@ -119,12 +119,12 @@ export const SliderView: React.FC<SliderViewProps> = ({
 
         {/* Labels */}
         <div className="absolute top-3 left-3 z-10">
-          <span className="px-3 py-1.5 rounded-full text-xs font-medium bg-void/80 backdrop-blur-sm border border-white/10 text-silver">
+          <span className="px-3 py-1.5 rounded-full text-xs font-semibold bg-white/90 backdrop-blur-sm border border-black/10 text-black shadow-md">
             Original
           </span>
         </div>
         <div className="absolute top-3 right-3 z-10">
-          <span className="px-3 py-1.5 rounded-full text-xs font-medium bg-accent/20 backdrop-blur-sm border border-accent/30 text-accent-bright">
+          <span className="px-3 py-1.5 rounded-full text-xs font-semibold bg-white/90 backdrop-blur-sm border border-black/10 text-black shadow-md">
             {modelName}
           </span>
         </div>

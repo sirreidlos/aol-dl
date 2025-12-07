@@ -12,6 +12,7 @@ import {
   SyncZoomView,
   BothModelsView,
   OverlayProgress,
+  LoadingScreen,
 } from './components';
 import { ModelSelection, ViewMode, ImageData, SingleModelType } from './types';
 
@@ -48,6 +49,8 @@ function App() {
   const [processingProgress, setProcessingProgress] = useState(0);
   const [currentTile, setCurrentTile] = useState<{x1: number, y1: number, x2: number, y2: number, current: number, total: number} | null>(null);
   const [modelInitialized, setModelInitialized] = useState(false);
+  const [modelLoadError, setModelLoadError] = useState<string | null>(null);
+  const [modelsStatus, setModelsStatus] = useState({ resnet: false, gan: false });
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const processingRef = useRef(false);
   const initializingRef = useRef(false);
@@ -68,16 +71,27 @@ function App() {
     console.log('Model selection changed, initializing model');
     const initModel = async () => {
       initializingRef.current = true;
+      setModelLoadError(null);
       try {
-        const modelPath = getModelPath(modelSelection.mode === 'single' ? modelSelection.single : modelSelection.left);
+        const selectedModel = modelSelection.mode === 'single' ? modelSelection.single : modelSelection.left;
+        const modelPath = getModelPath(selectedModel);
         console.log('Calling onnxService.initializeModel with:', modelPath);
         await onnxService.initializeModel(modelPath);
         console.log('ONNX model initialized successfully');
         console.log('Setting modelInitialized to true...');
+        
+        // Update model status based on which model was loaded
+        setModelsStatus(prev => ({
+          ...prev,
+          resnet: selectedModel === 'srresnet' || selectedModel === 'srranet' ? true : prev.resnet,
+          gan: selectedModel === 'srgan' || selectedModel === 'srragan' ? true : prev.gan,
+        }));
+        
         setModelInitialized(true);
         console.log('modelInitialized state set');
       } catch (error) {
         console.error('Failed to initialize ONNX model:', error);
+        setModelLoadError(error instanceof Error ? error.message : 'Failed to load model');
       } finally {
         initializingRef.current = false;
       }
@@ -85,59 +99,91 @@ function App() {
     initModel();
   }, [modelSelection.mode === 'single' ? modelSelection.single : modelSelection.left]);
 
-  // Handle image processing when model is initialized or selection changes
+  // Retry loading model
+  const handleRetryModelLoad = useCallback(() => {
+    setModelInitialized(false);
+    setModelLoadError(null);
+    setModelsStatus({ resnet: false, gan: false });
+    initializingRef.current = false;
+    // Trigger re-initialization by forcing a re-render
+    const selectedModel = modelSelection.mode === 'single' ? modelSelection.single : modelSelection.left;
+    const initModel = async () => {
+      initializingRef.current = true;
+      try {
+        const modelPath = getModelPath(selectedModel);
+        await onnxService.initializeModel(modelPath);
+        setModelsStatus(prev => ({
+          ...prev,
+          resnet: selectedModel === 'srresnet' || selectedModel === 'srranet' ? true : prev.resnet,
+          gan: selectedModel === 'srgan' || selectedModel === 'srragan' ? true : prev.gan,
+        }));
+        setModelInitialized(true);
+      } catch (error) {
+        console.error('Failed to initialize ONNX model:', error);
+        setModelLoadError(error instanceof Error ? error.message : 'Failed to load model');
+      } finally {
+        initializingRef.current = false;
+      }
+    };
+    initModel();
+  }, [modelSelection]);
+
+  // Handle re-processing when model selection changes (if we already have an image)
   useEffect(() => {
-    console.log('Image processing useEffect triggered:', { currentFile: !!currentFile, modelInitialized });
-    // Only process if we have a current file AND the model is fully initialized
-    if (currentFile && modelInitialized) {
-      // Process image for the currently selected model(s)
-      const processSelectedModels = async () => {
-        if (modelSelection.mode === 'single') {
-          // Always process when model changes in single mode
-          console.log('Processing image for model:', modelSelection.single);
-          await processImageWithModel(currentFile, modelSelection.single);
-        } else {
-          // Compare mode - process both models if needed
-          if (!images[modelSelection.left]) {
-            console.log('Processing image for left model:', modelSelection.left);
-            await processImageWithModel(currentFile, modelSelection.left);
+    // Skip if no file, not initialized, or already processing
+    if (!currentFile || !modelInitialized || processingRef.current) return;
+    
+    const reprocessIfNeeded = async () => {
+      if (modelSelection.mode === 'single') {
+        // In single mode, re-process if the selected model hasn't been processed yet
+        if (!images[modelSelection.single]) {
+          console.log('Re-processing for single model:', modelSelection.single);
+          
+          // Load the model first
+          const modelPath = getModelPath(modelSelection.single);
+          await onnxService.initializeModel(modelPath);
+          
+          await processImageWithModel(currentFile, modelSelection.single, true);
+        }
+      } else {
+        // Compare mode - check if we need to process either model
+        const needsLeft = !images[modelSelection.left];
+        const needsRight = !images[modelSelection.right];
+        
+        if (needsLeft || needsRight) {
+          console.log('Re-processing for compare mode, needsLeft:', needsLeft, 'needsRight:', needsRight);
+          
+          // Process left model if needed
+          if (needsLeft) {
+            console.log('Loading and processing left model:', modelSelection.left);
+            const leftModelPath = getModelPath(modelSelection.left);
+            await onnxService.initializeModel(leftModelPath);
+            await processImageWithModel(currentFile, modelSelection.left, true);
+            processingRef.current = false; // Reset for next model
           }
-          if (!images[modelSelection.right]) {
-            console.log('Processing image for right model:', modelSelection.right);
-            await processImageWithModel(currentFile, modelSelection.right);
+          
+          // Process right model if needed (and different from left)
+          if (needsRight && modelSelection.right !== modelSelection.left) {
+            console.log('Loading and processing right model:', modelSelection.right);
+            const rightModelPath = getModelPath(modelSelection.right);
+            await onnxService.initializeModel(rightModelPath);
+            await processImageWithModel(currentFile, modelSelection.right, true);
           }
         }
-      };
-      processSelectedModels();
-    }
-  }, [modelSelection, modelInitialized, currentFile]); // Add modelSelection back to dependencies
+      }
+    };
+    
+    reprocessIfNeeded();
+  }, [modelSelection.mode, modelSelection.single, modelSelection.left, modelSelection.right, modelInitialized, currentFile]); // Trigger on any model change
 
   const getModelPath = (modelType: SingleModelType): string => {
     return `models/${modelType}.onnx`;
   };
 
-  const processImageWithModel = useCallback(async (file: File, specificModel?: SingleModelType) => {
+  const processImageWithModel = useCallback(async (file: File, specificModel?: SingleModelType, skipOriginal?: boolean) => {
     if (processingRef.current) return;
     
-    console.log('processImageWithModel called with modelInitialized:', modelInitialized);
-    
-    // Ensure model is initialized - check the actual ONNXService state, not just React state
-    if (!modelInitialized) {
-      console.log('Model not initialized, waiting for initialization...');
-      
-      // Wait for model to be initialized
-      let attempts = 0;
-      while (!modelInitialized && attempts < 50) { // Wait up to 5 seconds
-        await new Promise(resolve => setTimeout(resolve, 100));
-        attempts++;
-        console.log(`Waiting for model initialization... attempt ${attempts}, modelInitialized: ${modelInitialized}`);
-      }
-      
-      if (!modelInitialized) {
-        console.error('Model failed to initialize within timeout period.');
-        throw new Error('Model failed to initialize within timeout period.');
-      }
-    }
+    console.log('processImageWithModel called with modelInitialized:', modelInitialized, 'skipOriginal:', skipOriginal);
     
     console.log('Model is initialized, proceeding with image processing...');
     
@@ -151,9 +197,13 @@ function App() {
       
       // Convert file to ImageData
       const imageData = await fileToImageData(file);
-      originalDataUrl = URL.createObjectURL(file);
-      setImages(prev => ({ ...prev, original: originalDataUrl }));
-      setCurrentFile(file); // Store current file for re-processing
+      
+      // Only set original if not skipping (for compare mode second model)
+      if (!skipOriginal) {
+        originalDataUrl = URL.createObjectURL(file);
+        setImages(prev => ({ ...prev, original: originalDataUrl }));
+        setCurrentFile(file); // Store current file for re-processing
+      }
       
       // Set input ImageData for progress visualization
       setInputImageData(imageData);
@@ -227,8 +277,34 @@ function App() {
   }, [modelInitialized, modelSelection]); // Add dependencies to update when modelInitialized changes
 
   const handleImageUpload = useCallback(async (file: File) => {
-    await processImageWithModel(file);
-  }, [processImageWithModel]);
+    if (processingRef.current) return;
+    
+    if (modelSelection.mode === 'single') {
+      // Single mode - just process with selected model
+      await processImageWithModel(file, modelSelection.single, false);
+    } else {
+      // Compare mode - process both models sequentially
+      console.log('Compare mode upload: processing both models sequentially');
+      
+      // Process the left model first
+      console.log('Processing left model:', modelSelection.left);
+      await processImageWithModel(file, modelSelection.left, false);
+      
+      // If right model is different, load it and process
+      if (modelSelection.left !== modelSelection.right) {
+        // Reset processing flag to allow second model
+        processingRef.current = false;
+        
+        console.log('Loading right model:', modelSelection.right);
+        const rightModelPath = getModelPath(modelSelection.right);
+        await onnxService.initializeModel(rightModelPath);
+        
+        console.log('Processing right model:', modelSelection.right);
+        // Skip setting original since it's already set from first model
+        await processImageWithModel(file, modelSelection.right, true);
+      }
+    }
+  }, [processImageWithModel, modelSelection, getModelPath]);
 
   const handleClearImage = useCallback(() => {
     setImages({ original: null, srgan: null, srresnet: null, srragan: null, srranet: null });
@@ -330,6 +406,18 @@ function App() {
       setProcessingProgress(0);
     }
   };
+
+  // Show loading screen until model is ready
+  if (!modelInitialized) {
+    return (
+      <LoadingScreen
+        modelsStatus={modelsStatus}
+        message={modelLoadError || undefined}
+        onRetry={handleRetryModelLoad}
+        hasError={!!modelLoadError}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-void grid-bg relative">
@@ -491,19 +579,12 @@ function App() {
               <Wand2 className="w-10 h-10 text-silver" />
             </div>
             <h3 className="font-display font-semibold text-2xl text-pearl mb-3">
-              {modelInitialized ? 'Ready to enhance your images' : 'Loading AI model...'}
+              Ready to enhance your images
             </h3>
             <p className="text-silver max-w-md mx-auto">
-              {modelInitialized 
-                ? 'Upload an image to see how our super resolution models can upscale and enhance it. Choose a single model or compare SRResNet and SRGAN side by side.'
-                : 'Initializing the super resolution model. This may take a few seconds...'
-              }
+              Upload an image to see how our super resolution models can upscale and enhance it. 
+              Choose a single model or compare different models side by side.
             </p>
-            {!modelInitialized && (
-              <div className="mt-4 w-32 h-1 bg-slate/50 rounded-full mx-auto overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-accent to-accent-bright animate-shimmer" style={{ backgroundSize: '200% 100%' }} />
-              </div>
-            )}
           </div>
         )}
       </main>
