@@ -1,10 +1,14 @@
 import torch
 import argparse
 from dataclasses import dataclass
+
+from torch._C import _dispatch_print_registrations_for_dispatch_key
 from models import ResNet, ResNetConfig, Generator, GeneratorConfig
 from PIL import Image
 
 from utils import convert_image
+from tqdm import tqdm
+from math import ceil
 
 
 @dataclass
@@ -33,8 +37,12 @@ def tile_forward(model, img, tile, overlap, scale):
     b, c, h, w = img.size()
     output = torch.zeros(b, c, h * scale, w * scale).to(device)
 
+    total = ceil(h / (tile - overlap)) * ceil(w / (tile - overlap))
+
+    pbar = tqdm(desc="Tiles", total=total, unit="tile")
     for y in range(0, h, tile - overlap):
         for x in range(0, w, tile - overlap):
+            pbar.update()
             y1, x1 = y, x
             y2 = min(y1 + tile, h)
             x2 = min(x1 + tile, w)

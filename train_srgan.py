@@ -420,6 +420,7 @@ class RaGANLossStrategy(SRGANLossStrategy):
         device=DEFAULT_DEVICE,
         vgg_layer=(5, 4),
         exclude_activation=False,
+        psnr_mode: bool = False,
     ):
         self.perceptual_loss_weight = perceptual_loss_weight
         self.pixel_loss_weight = pixel_loss_weight
@@ -430,6 +431,7 @@ class RaGANLossStrategy(SRGANLossStrategy):
         ).to(DEFAULT_DEVICE)
         self.l1_loss = nn.L1Loss().to(device)
         self.adversarial_loss_criterion = nn.BCEWithLogitsLoss().to(device)
+        self.psnr_mode = psnr_mode
 
     def calculate_loss_g(
         self,
@@ -450,6 +452,18 @@ class RaGANLossStrategy(SRGANLossStrategy):
         pixel_loss = self.l1_loss(sr_imgs, hr_imgs)
 
         assert discriminator is not None, "Discriminator required for GAN mode"
+
+        if self.psnr_mode:
+            total_loss = (
+                self.perceptual_loss_weight * perceptual_loss
+                + self.pixel_loss_weight * pixel_loss
+            )
+            return total_loss, LossDict(
+                g_perceptual=perceptual_loss.item(),
+                g_pixel=pixel_loss.item(),
+                g_adversarial=0.0,
+                g_total=total_loss.item(),
+            )
 
         pred_real = discriminator(hr_imgs).detach()
         pred_fake = discriminator(sr_imgs)
@@ -780,17 +794,27 @@ def main():
     match args.loss_strategy:
         case "perceptual":
             loss_strategy = SRGANPerceptualLossStrategy(
-                5e-3,
-                device,
-                args.label_smoothing,
+                adversarial_loss_weight=5e-3,
+                device=device,
+                label_smoothing=args.label_smoothing,
                 vgg_layer=args.vgg_layer,
                 exclude_activation=args.exclude_activation,
             )
         case "content":
-            loss_strategy = SRGANContentLossStrategy(5e-3, device, args.label_smoothing)
+            loss_strategy = SRGANContentLossStrategy(
+                adversarial_loss_weight=5e-3,
+                device=device,
+                label_smoothing=args.label_smoothing,
+            )
         case "relativistic":
             loss_strategy = RaGANLossStrategy(
-                1.0, 1e-2, 5e-3, device, args.vgg_layer, args.exclude_activation
+                perceptual_loss_weight=1.0,
+                pixel_loss_weight=1e-2,
+                adversarial_loss_weight=5e-3,
+                device=device,
+                vgg_layer=args.vgg_layer,
+                exclude_activation=args.exclude_activation,
+                psnr_mode=args.psnr_mode,
             )
 
     train_dataset = SRDataset(
