@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Wand2, Github, Sparkles } from 'lucide-react';
+import { Wand2, Github, Sparkles, Download } from 'lucide-react';
 import { ONNXService } from './utils/onnxService';
 const onnxService = new ONNXService();
 import { fileToImageData, imageDataToDataUrl } from './utils/imageUtils';
@@ -325,6 +325,16 @@ function App() {
     return `${modelNames[model]} (ONNX)`;
   };
 
+  // Download handler for processed images
+  const handleDownload = useCallback((imageUrl: string, modelName: string) => {
+    const link = document.createElement('a');
+    link.href = imageUrl;
+    link.download = `super-resolution-${modelName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, []);
+
   const renderComparison = () => {
     if (!images.original) return null;
 
@@ -563,9 +573,50 @@ function App() {
               <h2 className="font-display font-semibold text-lg text-pearl">
                 {getResultTitle()}
               </h2>
-              <div className="flex items-center gap-2 text-sm text-silver">
-                <span className="w-2 h-2 rounded-full bg-green-500" />
-                Processing complete
+              <div className="flex items-center gap-4">
+                {/* Download Buttons */}
+                {isComparing ? (
+                  <>
+                    {images[modelSelection.left] && (
+                      <button
+                        onClick={() => handleDownload(images[modelSelection.left]!, getModelName(modelSelection.left))}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate/50 border border-white/10 text-sm text-silver hover:text-pearl hover:border-white/20 transition-all"
+                      >
+                        <Download className="w-4 h-4" />
+                        {getModelName(modelSelection.left).replace(' (ONNX)', '')}
+                      </button>
+                    )}
+                    {images[modelSelection.right] && (
+                      <button
+                        onClick={() => handleDownload(images[modelSelection.right]!, getModelName(modelSelection.right))}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate/50 border border-white/10 text-sm text-silver hover:text-pearl hover:border-white/20 transition-all"
+                      >
+                        <Download className="w-4 h-4" />
+                        {getModelName(modelSelection.right).replace(' (ONNX)', '')}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {(() => {
+                      const selectedModel = modelSelection.mode === 'single' ? modelSelection.single : modelSelection.left;
+                      const processedImage = getModelImage(selectedModel);
+                      return processedImage && (
+                        <button
+                          onClick={() => handleDownload(processedImage, getModelName(selectedModel))}
+                          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate/50 border border-white/10 text-sm text-silver hover:text-pearl hover:border-white/20 transition-all"
+                        >
+                          <Download className="w-4 h-4" />
+                          Download
+                        </button>
+                      );
+                    })()}
+                  </>
+                )}
+                <div className="flex items-center gap-2 text-sm text-silver">
+                  <span className="w-2 h-2 rounded-full bg-green-500" />
+                  Complete
+                </div>
               </div>
             </div>
             {renderComparison()}
