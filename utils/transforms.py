@@ -81,13 +81,11 @@ def convert_image(
             elif img.ndimension() == 4:
                 img = (img - imagenet_mean_cuda) / imagenet_std_cuda
         case "y-channel":
-            img = (
-                torch.matmul(
-                    255.0 * img.permute(0, 2, 3, 1)[:, 4:-4, 4:-4, :], rgb_weights
-                )
-                / 255.0
-                + 16.0
-            )
+            # img_255 = img * 255.0
+            # img = torch.matmul(img_255.permute(0, 2, 3, 1), rgb_weights) / 255.0 + 16.0
+            # img = (img - 16.0) / 219.0
+
+            img = torch.matmul(img.permute(0, 2, 3, 1), rgb_weights) / 219.0
 
     return img
 

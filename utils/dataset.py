@@ -14,7 +14,6 @@ class SRDataset(Dataset):
         scaling_factor,
         lr_img_type,
         hr_img_type,
-        test_data_name=None,
     ):
         """
         :param data_folder: # folder with JSON data files
@@ -32,11 +31,8 @@ class SRDataset(Dataset):
         self.scaling_factor = int(scaling_factor)
         self.lr_img_type = lr_img_type
         self.hr_img_type = hr_img_type
-        self.test_data_name = test_data_name
 
         assert self.split in {"train", "test"}
-        if self.split == "test" and self.test_data_name is None:
-            raise ValueError("Please provide the name of the test dataset!")
         assert lr_img_type in {"[0, 255]", "[0, 1]", "[-1, 1]", "imagenet-norm"}
         assert hr_img_type in {"[0, 255]", "[0, 1]", "[-1, 1]", "imagenet-norm"}
 
@@ -53,7 +49,7 @@ class SRDataset(Dataset):
                 self.images = json.load(j)
         else:
             with open(
-                os.path.join(data_folder, self.test_data_name + "_test_images.json"),
+                os.path.join(data_folder, "test_images.json"),
                 "r",
             ) as j:
                 self.images = json.load(j)
